@@ -1,0 +1,26 @@
+name: fchat3-log-merger
+version: "1.0"
+about: Reads multiple F-Chat 3.0 client log folders and merges them together
+author: Carlen White <whitersuburban@gmail.com>
+
+settings:
+  - ArgRequiredElseHelp
+
+args:
+  - folders:
+      help: What folders to read from.
+      short: f
+      long: folder
+      multiple: true
+      takes_value: true
+      required: true
+  - time-diff:
+      help: How long the time difference between messages to check for duplicates specified in human time. Defaults to 5min
+      short: d
+      long: time-diff
+      takes_value: true
+  - output:
+      help: Folder to write the merged logs to.
+      short: o
+      long: output
+      takes_value: true

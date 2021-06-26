@@ -1,0 +1,29 @@
+[package]
+name = "fchat3-log-merger"
+version = "0.1.0"
+authors = ["Carlen White <whitersuburban@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fchat3-log-lib = {git = "https://github.com/WhiteHusky/fchat3-log-lib"}
+
+[dependencies.clap]
+version = "~2"
+features = ["yaml"]
+
+[dependencies.humantime]
+version = "~2"
+
+[dependencies.log]
+version = "~0"
+
+[dependencies.pretty_env_logger]
+version = "~0"
+
+[dependencies.chrono]
+version = "~0"
+
+[dependencies.rayon]
+version = "~1"
