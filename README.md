@@ -8,7 +8,7 @@ Carlen White <whitersuburban@gmail.com>
 Reads multiple F-Chat 3.0 client log folders and merges them together
 
 USAGE:
-    fchat3-log-merger [OPTIONS] --folder <folders>...
+    fchat3-log-merger [OPTIONS] --folder <folders>... --output <output>
 
 FLAGS:
     -h, --help       Prints help information
