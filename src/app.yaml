@@ -24,3 +24,4 @@ args:
       short: o
       long: output
       takes_value: true
+      required: true
