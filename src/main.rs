@@ -1,5 +1,6 @@
 use clap::App;
 use clap::load_yaml;
+use fchat3_log_lib::fchat_index::FChatIndex;
 use fchat3_log_lib::{FChatMessageReader, FChatWriter, fchat_message::FChatMessage};
 use humantime::{parse_duration, format_duration};
 use log::{info, trace, error};
@@ -23,6 +24,7 @@ enum Error {
     BadTimeDiff(humantime::DurationError),
     UnableToCreateDirectory(std::io::Error),
     MessageParseError(fchat3_log_lib::error::Error),
+    UnableToOpenIndex(std::io::Error),
     ExitingWithError
 }
 
@@ -162,6 +164,16 @@ fn main() -> Result<(), Error> {
         }
         let results: Vec<Result<(), Error>> = log_entries.par_iter().map(|(log_name, locations)| {
             //info!("Merging tab {}", log_name.to_string_lossy());
+            let tab_name = {
+                let mut source_idx = locations[0].clone();
+                source_idx.set_extension("idx");
+                let f_r = File::open(source_idx);
+                if let Ok(mut f) = f_r {
+                    FChatIndex::read_header_from_buf(&mut f)?.name
+                } else {
+                    return Err(Error::UnableToOpenIndex(f_r.unwrap_err()))
+                }
+            };
             let mut log_path = output_log_location.clone();
             log_path.push(log_name);
             let mut idx_path = log_path.clone();
@@ -169,7 +181,7 @@ fn main() -> Result<(), Error> {
             let mut w = FChatWriter::new(
                 options.open(log_path).unwrap(),
                 options.open(idx_path).unwrap(),
-                log_name.to_str().unwrap().to_owned()).unwrap();
+                tab_name).unwrap();
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).unwrap();
