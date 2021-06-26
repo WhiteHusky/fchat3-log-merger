@@ -7,7 +7,7 @@ use pretty_env_logger;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::ffi::OsString;
-use std::fs::{File, OpenOptions, create_dir, read_dir};
+use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
 use std::io::BufReader;
 use std::iter::Peekable;
 use std::path::{Path, PathBuf};
@@ -155,7 +155,8 @@ fn main() -> Result<(), Error> {
         info!("Merging {}", character_name.to_string_lossy());
         let mut output_log_location = output_path.to_path_buf();
         output_log_location.push(character_name.clone());
-        if let Err(e) = create_dir(output_log_location.clone()) {
+        output_log_location.push("logs");
+        if let Err(e) = create_dir_all(output_log_location.clone()) {
             error!("Unable to create directory for {}", character_name.to_string_lossy());
             return Err(Error::UnableToCreateDirectory(e))
         }
@@ -168,7 +169,7 @@ fn main() -> Result<(), Error> {
             let mut w = FChatWriter::new(
                 options.open(log_path).unwrap(),
                 options.open(idx_path).unwrap(),
-                character_name.to_str().unwrap().to_owned()).unwrap();
+                log_name.to_str().unwrap().to_owned()).unwrap();
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).unwrap();
