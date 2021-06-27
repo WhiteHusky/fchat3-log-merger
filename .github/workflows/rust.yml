@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux_build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --release
+    - name: Upload Build
+      uses: actions/upload-artifact@v2.2.4
+      with:
+        name: linux_build
+        path: target/release/fchat3-log-merger
+  windows_build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --release
+    - name: Upload Build
+      uses: actions/upload-artifact@v2.2.4
+      with:
+        name: windows_build
+        path: target/release/fchat3-log-merger.exe
+  macos_build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --release
+    - name: Upload Build
+      uses: actions/upload-artifact@v2.2.4
+      with:
+        name: macos_build
+        path: target/release/fchat3-log-merger
