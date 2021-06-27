@@ -12,6 +12,7 @@ use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
 use std::io::BufReader;
 use std::iter::Peekable;
 use std::path::{Path, PathBuf};
+use std::process;
 use chrono::Duration;
 use rayon::prelude::*;
 
@@ -31,6 +32,22 @@ enum Error {
 impl From<fchat3_log_lib::error::Error> for Error {
     fn from(e: fchat3_log_lib::error::Error) -> Self {
         Self::MessageParseError(e)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::OutputExists(p) => write!(f, "Output folder already exists: {}", p.to_string_lossy()),
+            Error::NotEnoughInputs => write!(f, "Specify more than one input folder."),
+            Error::InputDoesNotExist(p) => write!(f, "Input folder does not exists: {}", p.to_string_lossy()),
+            Error::InputIsNotDirectory(p) => write!(f, "Input folder is not a directory: {}", p.to_string_lossy()),
+            Error::BadTimeDiff(e) => e.fmt(f),
+            Error::UnableToCreateDirectory(e) => write!(f, "Unable to create directory: {}", e),
+            Error::MessageParseError(e) => write!(f, "Parsing message failed: {}", e),
+            Error::UnableToOpenIndex(e) => write!(f, "Unable to open index: {}", e),
+            Error::ExitingWithError => write!(f, "Exiting with error. Check output."),
+        }
     }
 }
 struct SortedMessage {
@@ -64,20 +81,24 @@ type LogName = OsString;
 type Logs = HashMap<LogName, Vec<PathBuf>>;
 type Characters = HashMap<CharacterName, Logs>;
 
-fn main() -> Result<(), Error> {
+fn main() {
+    match _main() {
+        Err(e) => {
+            error!("{}", e);
+            process::exit(-1);
+        }
+        _ => {}
+    }
+}
+
+fn _main() -> Result<(), Error> {
     pretty_env_logger::init();
     let yml = load_yaml!("app.yaml");
     let matches = App::from_yaml(yml).get_matches();
     let output_path = Path::new(matches.value_of("output").unwrap());
 
     if output_path.exists() {
-        error!("Output already exists.");
         return Err(Error::OutputExists(output_path.to_owned()))
-    }
-
-    if let Err(e) = create_dir(output_path) {
-        error!("Unable to create output directory: {}", output_path.to_string_lossy());
-        return Err(Error::UnableToCreateDirectory(e))
     }
 
     let mut characters: Characters = HashMap::new();
@@ -85,17 +106,14 @@ fn main() -> Result<(), Error> {
     {
         let folder_strings: Vec<&str> = matches.values_of("folders").unwrap().collect();
         if folder_strings.len() < 2 {
-            error!("Specifiy more than one folder.");
             return Err(Error::NotEnoughInputs)
         }
         for folder_string in folder_strings {
             let folder_path = PathBuf::from(folder_string);
 
             if !folder_path.exists() {
-                error!("Path does not exist: {:?}", folder_path);
                 return Err(Error::InputDoesNotExist(folder_path))
             } else if !folder_path.is_dir() {
-                error!("Path is not directory: {:?}", folder_path);
                 return Err(Error::InputIsNotDirectory(folder_path))
             }
             for c in read_dir(folder_path).unwrap() {
@@ -142,7 +160,6 @@ fn main() -> Result<(), Error> {
         Some(s) => match parse_duration(s) {
             Ok(d) => Duration::from_std(d).unwrap(),
             Err(e) => {
-                error!("Bad time diff specified: {}.", e);
                 return Err(Error::BadTimeDiff(e))
             },
         },
@@ -151,22 +168,61 @@ fn main() -> Result<(), Error> {
     
     info!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
 
-    let results: Vec<Result<Vec<Result<(), Error>>, Error>> = characters.par_iter().map(|(character_name, log_entries)| {
+    if let Err(e) = create_dir(output_path) {
+        return Err(Error::UnableToCreateDirectory(e))
+    }
+
+    let results = merge_logs(&characters, output_path, time_diff);
+    let mut character_index = 0;
+    let mut error_count = 0;
+    for (character, log_entries) in characters {
+        if let Err(e) = &results[character_index] {
+            error_count += 1;
+            error!("{} had an error: {:?}", character.to_string_lossy(), e);
+        }
+        let mut log_entry_index = 0;
+        for (log_name, _) in log_entries {
+            if let Err(e) = &results[character_index].as_ref().unwrap()[log_entry_index] {
+                error_count += 1;
+                error!("{} for {} had an error: {:?}", log_name.to_string_lossy(), character.to_string_lossy(), e);
+            }
+            log_entry_index += 1;
+        }
+        character_index += 1;
+    }
+    return if error_count > 0 {
+        error!("{} errors were hit", error_count);
+        Err(Error::ExitingWithError)
+    } else {
+        info!("Success.");
+        Ok(())
+    }
+}
+
+type MergeResults = Vec<Result<Vec<Result<(), Error>>, Error>>;
+type PerLogMergeResults = Vec<Result<(), Error>>;
+
+fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) -> MergeResults {
+    characters.par_iter().map(|(character_name, log_entries)| {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
+
         info!("Merging {}", character_name.to_string_lossy());
+
         let mut output_log_location = output_path.to_path_buf();
         output_log_location.push(character_name.clone());
         output_log_location.push("logs");
+
         if let Err(e) = create_dir_all(output_log_location.clone()) {
-            error!("Unable to create directory for {}", character_name.to_string_lossy());
             return Err(Error::UnableToCreateDirectory(e))
         }
-        let results: Vec<Result<(), Error>> = log_entries.par_iter().map(|(log_name, locations)| {
+
+        let results: PerLogMergeResults = log_entries.par_iter().map(|(log_name, locations)| {
             //info!("Merging tab {}", log_name.to_string_lossy());
             let tab_name = {
                 let mut source_idx = locations[0].clone();
                 source_idx.set_extension("idx");
+
                 let f_r = File::open(source_idx);
                 if let Ok(mut f) = f_r {
                     FChatIndex::read_header_from_buf(&mut f)?.name
@@ -174,14 +230,18 @@ fn main() -> Result<(), Error> {
                     return Err(Error::UnableToOpenIndex(f_r.unwrap_err()))
                 }
             };
+
             let mut log_path = output_log_location.clone();
             log_path.push(log_name);
+
             let mut idx_path = log_path.clone();
             idx_path.set_extension("idx");
+
             let mut w = FChatWriter::new(
                 options.open(log_path).unwrap(),
                 options.open(idx_path).unwrap(),
                 tab_name).unwrap();
+
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).unwrap();
@@ -258,31 +318,7 @@ fn main() -> Result<(), Error> {
             Ok(())
         }).collect();
         Ok(results)
-    }).collect();
-    let mut character_index = 0;
-    let mut error_count = 0;
-    for (character, log_entries) in characters {
-        if let Err(e) = &results[character_index] {
-            error_count += 1;
-            error!("{} had an error: {:?}", character.to_string_lossy(), e);
-        }
-        let mut log_entry_index = 0;
-        for (log_name, _) in log_entries {
-            if let Err(e) = &results[character_index].as_ref().unwrap()[log_entry_index] {
-                error_count += 1;
-                error!("{} for {} had an error: {:?}", log_name.to_string_lossy(), character.to_string_lossy(), e);
-            }
-            log_entry_index += 1;
-        }
-        character_index += 1;
-    }
-    return if error_count > 0 {
-        error!("{} errors were hit", error_count);
-        Err(Error::ExitingWithError)
-    } else {
-        info!("Success.");
-        Ok(())
-    }
+    }).collect()
 }
 
 fn message_body(message: &FChatMessage) -> &String {
