@@ -111,8 +111,7 @@ fn _main() -> Result<(), Error> {
         if folder_strings.len() < 2 {
             return Err(Error::NotEnoughInputs)
         }
-        for folder_string in folder_strings {
-            let folder_path = PathBuf::from(folder_string);
+        for folder_path in folder_strings.into_iter().map(|s| PathBuf::from(s)) {
 
             if !folder_path.exists() {
                 return Err(Error::InputDoesNotExist(folder_path))
@@ -156,7 +155,7 @@ fn _main() -> Result<(), Error> {
                 sum += files.len();
             }
         }
-        info!("{} files to merge.", sum)
+        println!("{} files to merge.", sum)
     }
 
     let time_diff = match matches.value_of("time-diff") {
@@ -169,7 +168,7 @@ fn _main() -> Result<(), Error> {
         None => Duration::seconds(60*5) // 5 minutes
     };
     
-    info!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
+    println!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
 
     create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
 
