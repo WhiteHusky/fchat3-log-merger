@@ -10,11 +10,12 @@ use std::collections::{BinaryHeap, HashMap};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
 use std::io::BufReader;
-use std::iter::Peekable;
 use std::path::{Path, PathBuf};
 use std::process;
 use chrono::Duration;
 use rayon::prelude::*;
+use std::sync::Mutex;
+use linya::Progress;
 
 #[derive(Debug)]
 enum Error {
@@ -26,6 +27,7 @@ enum Error {
     UnableToCreateDirectory(std::io::Error),
     MessageParseError(fchat3_log_lib::error::Error),
     UnableToOpenIndex(std::io::Error),
+    UnableToOpenFile(std::io::Error),
     ExitingWithError
 }
 
@@ -47,6 +49,7 @@ impl std::fmt::Display for Error {
             Error::MessageParseError(e) => write!(f, "Parsing message failed: {}", e),
             Error::UnableToOpenIndex(e) => write!(f, "Unable to open index: {}", e),
             Error::ExitingWithError => write!(f, "Exiting with error. Check output."),
+            Error::UnableToOpenFile(e) => write!(f, "Unable to open file: {}", e),
         }
     }
 }
@@ -168,9 +171,7 @@ fn _main() -> Result<(), Error> {
     
     info!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
 
-    if let Err(e) = create_dir(output_path) {
-        return Err(Error::UnableToCreateDirectory(e))
-    }
+    create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
 
     let results = merge_logs(&characters, output_path, time_diff);
     let mut character_index = 0;
@@ -184,7 +185,7 @@ fn _main() -> Result<(), Error> {
         for (log_name, _) in log_entries {
             if let Err(e) = &results[character_index].as_ref().unwrap()[log_entry_index] {
                 error_count += 1;
-                error!("{} for {} had an error: {:?}", log_name.to_string_lossy(), character.to_string_lossy(), e);
+                error!("{} for {} had an error: {}", log_name.to_string_lossy(), character.to_string_lossy(), e);
             }
             log_entry_index += 1;
         }
@@ -203,6 +204,7 @@ type MergeResults = Vec<Result<Vec<Result<(), Error>>, Error>>;
 type PerLogMergeResults = Vec<Result<(), Error>>;
 
 fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) -> MergeResults {
+    let progress = Mutex::new(Progress::new());
     characters.par_iter().map(|(character_name, log_entries)| {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
@@ -213,9 +215,17 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
         output_log_location.push(character_name.clone());
         output_log_location.push("logs");
 
-        if let Err(e) = create_dir_all(output_log_location.clone()) {
-            return Err(Error::UnableToCreateDirectory(e))
-        }
+        create_dir_all(output_log_location.clone()).map_err(Error::UnableToCreateDirectory)?;
+
+        let bar = Mutex::new(
+            progress
+                .lock()
+                .unwrap()
+                .bar(
+                    log_entries.len(),
+                    format!("{}", character_name.to_string_lossy())
+                )
+        );
 
         let results: PerLogMergeResults = log_entries.par_iter().map(|(log_name, locations)| {
             //info!("Merging tab {}", log_name.to_string_lossy());
@@ -223,12 +233,8 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                 let mut source_idx = locations[0].clone();
                 source_idx.set_extension("idx");
 
-                let f_r = File::open(source_idx);
-                if let Ok(mut f) = f_r {
-                    FChatIndex::read_header_from_buf(&mut f)?.name
-                } else {
-                    return Err(Error::UnableToOpenIndex(f_r.unwrap_err()))
-                }
+                let mut f = File::open(source_idx).map_err(Error::UnableToOpenIndex)?;
+                FChatIndex::read_header_from_buf(&mut f)?.name
             };
 
             let mut log_path = output_log_location.clone();
@@ -238,23 +244,23 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
             idx_path.set_extension("idx");
 
             let mut w = FChatWriter::new(
-                options.open(log_path).unwrap(),
-                options.open(idx_path).unwrap(),
+                options.open(log_path).map_err(Error::UnableToOpenFile)?,
+                options.open(idx_path).map_err(Error::UnableToOpenFile)?,
                 tab_name).unwrap();
 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
-                let f = File::open(&locations[0]).unwrap();
+                let f = File::open(&locations[0]).map_err(Error::UnableToOpenFile)?;
                 for r in FChatMessageReader::new(BufReader::new(f)) {
                     let message = r?;
-                    w.write_message(message).unwrap();
+                    w.write_message(message)?;
                 }
             // Otherwise, start queuing messages, matching, sorting by send-time, before rotating them into the output
             } else {
-                let mut readers: Vec<Peekable<FChatMessageReader>> = locations.iter()
-                .map(|p| {
-                    FChatMessageReader::new(BufReader::new(File::open(p).unwrap())).peekable()
-                }).collect();
+                let mut readers = Vec::with_capacity(locations.len());
+                for p in locations {
+                    readers.push(FChatMessageReader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
+                }
 
                 let mut messages = BinaryHeap::new();
                 loop {
@@ -315,6 +321,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                     }
                 }
             }
+            progress.lock().unwrap().inc_and_draw(&bar.lock().unwrap(), 1);
             Ok(())
         }).collect();
         Ok(results)
