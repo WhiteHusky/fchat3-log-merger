@@ -37,6 +37,12 @@ impl From<fchat3_log_lib::error::Error> for Error {
     }
 }
 
+impl From<humantime::DurationError> for Error {
+    fn from(e: humantime::DurationError) -> Self {
+        Self::BadTimeDiff(e)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -159,12 +165,7 @@ fn _main() -> Result<(), Error> {
     }
 
     let time_diff = match matches.value_of("time-diff") {
-        Some(s) => match parse_duration(s) {
-            Ok(d) => Duration::from_std(d).unwrap(),
-            Err(e) => {
-                return Err(Error::BadTimeDiff(e))
-            },
-        },
+        Some(s) => Duration::from_std(parse_duration(s)?).unwrap(),
         None => Duration::seconds(60*5) // 5 minutes
     };
     
@@ -172,7 +173,7 @@ fn _main() -> Result<(), Error> {
 
     create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
 
-    let results = merge_logs(&characters, output_path, time_diff);
+    let results: MergeResults = merge_logs(&characters, output_path, time_diff);
     let mut character_index = 0;
     let mut error_count = 0;
     for (character, log_entries) in characters {
