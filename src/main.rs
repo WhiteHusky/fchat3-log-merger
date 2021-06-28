@@ -283,35 +283,34 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                         let oldest_message = messages.peek().unwrap().0.message.clone();
                         while index < readers.len() {
                             let reader = &mut readers[index];
-                            if let Some(peeked_result) = reader.peek() {
-                                if let Ok(peeked_message) = peeked_result.as_ref() {
-                                    if peeked_message.datetime < oldest_message.datetime + time_diff {
-                                        let mut duplicate = false;
-                                        let check_message = reader.next().unwrap()?;
-                                        for Reverse(SortedMessage {message}) in &messages {
-                                            if check_message.datetime < message.datetime + time_diff {
-                                                if message_compare(&check_message, &message) {
-                                                    //trace!("Duplicate Hit: {:?} == {:?}", check_message, message);
-                                                    duplicate = true;
-                                                    break
-                                                }
-                                            } else {
+                            match reader.peek() {
+                                Some(Ok(peeked_message)) if peeked_message.datetime  < oldest_message.datetime + time_diff => {
+                                    let mut duplicate = false;
+                                    let check_message = reader.next().unwrap()?;
+                                    for Reverse(SortedMessage {message}) in &messages {
+                                        if check_message.datetime < message.datetime + time_diff {
+                                            if message_compare(&check_message, &message) {
+                                                //trace!("Duplicate Hit: {:?} == {:?}", check_message, message);
+                                                duplicate = true;
                                                 break
                                             }
+                                        } else {
+                                            break
                                         }
-                                        if !duplicate {
-                                            messages.push(Reverse(SortedMessage{message:check_message}));
-                                        }
-                                    } else {
-                                        index += 1;
                                     }
-                                } else {
+                                    if !duplicate {
+                                        messages.push(Reverse(SortedMessage{message:check_message}));
+                                    }
+                                },
+                                Some(Ok(_)) => {
+                                    index += 1;
+                                }
+                                Some(Err(_)) => {
                                     // We know an error is coming up, so result it to nothing and catch it.
                                     let _ = reader.next().unwrap()?;
                                     panic!("We were expecting an error to unwrap, but it did not.");
-                                }               
-                            } else {
-                                let _ = readers.remove(index);
+                                },
+                                None => {let _ = readers.remove(index);},
                             }
                         }
                         let message = messages.pop().unwrap().0.message;
