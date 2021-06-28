@@ -194,7 +194,6 @@ fn _main() -> Result<(), Error> {
         error!("{} errors were hit", error_count);
         Err(Error::ExitingWithError)
     } else {
-        info!("Success.");
         Ok(())
     }
 }
@@ -207,8 +206,6 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
     characters.par_iter().map(|(character_name, log_entries)| {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true);
-
-        info!("Merging {}", character_name.to_string_lossy());
 
         let mut output_log_location = output_path.to_path_buf();
         output_log_location.push(character_name.clone());
