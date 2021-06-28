@@ -178,7 +178,7 @@ fn _main() -> Result<(), Error> {
     for (character, log_entries) in characters {
         if let Err(e) = &results[character_index] {
             error_count += 1;
-            error!("{} had an error: {:?}", character.to_string_lossy(), e);
+            error!("{} had an error: {}", character.to_string_lossy(), e);
         }
         let mut log_entry_index = 0;
         for (log_name, _) in log_entries {
