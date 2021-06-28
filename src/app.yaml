@@ -1,5 +1,4 @@
 name: fchat3-log-merger
-version: "1.0"
 about: Reads multiple F-Chat 3.0 client log folders and merges them together
 author: Carlen White <whitersuburban@gmail.com>
 

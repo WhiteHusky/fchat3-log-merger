@@ -1,5 +1,4 @@
-use clap::App;
-use clap::load_yaml;
+use clap::{App, crate_version, load_yaml};
 use fchat3_log_lib::fchat_index::FChatIndex;
 use fchat3_log_lib::{FChatMessageReader, FChatWriter, fchat_message::FChatMessage};
 use humantime::{parse_duration, format_duration};
@@ -103,7 +102,7 @@ fn main() {
 fn _main() -> Result<(), Error> {
     pretty_env_logger::init();
     let yml = load_yaml!("app.yaml");
-    let matches = App::from_yaml(yml).get_matches();
+    let matches = App::from_yaml(yml).version(crate_version!()).get_matches();
     let output_path = Path::new(matches.value_of("output").unwrap());
 
     if output_path.exists() {
