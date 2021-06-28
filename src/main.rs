@@ -8,7 +8,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::process;
 use chrono::Duration;
@@ -242,17 +242,20 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
             let mut idx_path = log_path.clone();
             idx_path.set_extension("idx");
 
+            let mut idx_buf = BufWriter::new(options.open(idx_path).map_err(Error::UnableToOpenFile)?);
+            let mut log_buf = BufWriter::new(options.open(log_path).map_err(Error::UnableToOpenFile)?);
+
             let mut w = FChatWriter::new(
-                options.open(log_path).map_err(Error::UnableToOpenFile)?,
-                options.open(idx_path).map_err(Error::UnableToOpenFile)?,
-                tab_name).unwrap();
+                &mut idx_buf,
+                tab_name
+            )?;
 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).map_err(Error::UnableToOpenFile)?;
                 for r in FChatMessageReader::new(BufReader::new(f)) {
                     let message = r?;
-                    w.write_message(message)?;
+                    w.write_message(&mut log_buf, &mut idx_buf, message)?;
                 }
             // Otherwise, start queuing messages, matching, sorting by send-time, before rotating them into the output
             } else {
@@ -316,7 +319,8 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                                 messages.push(Reverse(SortedMessage{message:check_message}));
                             }
                         }
-                        w.write_message(messages.pop().unwrap().0.message)?;
+                        let message = messages.pop().unwrap().0.message;
+                        w.write_message(&mut log_buf, &mut idx_buf, message)?;
                     }
                 }
             }

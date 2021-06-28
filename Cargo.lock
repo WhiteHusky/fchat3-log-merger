@@ -150,7 +150,7 @@ dependencies = [
 [[package]]
 name = "fchat3-log-lib"
 version = "0.1.0"
-source = "git+https://github.com/WhiteHusky/fchat3-log-lib#7d60c992633842f0488539803e5e5ba6bf6b8da9"
+source = "git+https://github.com/WhiteHusky/fchat3-log-lib?branch=hands-off#321fcf1a617df94b27fd37d16dfbbaea8b01eb4e"
 dependencies = [
  "byteorder",
  "chrono",
