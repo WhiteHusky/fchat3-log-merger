@@ -148,7 +148,7 @@ dependencies = [
 [[package]]
 name = "fchat3-log-lib"
 version = "0.1.0"
-source = "git+https://github.com/WhiteHusky/fchat3-log-lib#7d60c992633842f0488539803e5e5ba6bf6b8da9"
+source = "git+https://github.com/WhiteHusky/fchat3-log-lib#049e80852f48dd1a9c9e4e62035ad651a267c8ae"
 dependencies = [
  "byteorder",
  "chrono",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "fchat3-log-merger"
-version = "0.1.0"
+version = "1.0.3"
 dependencies = [
  "chrono",
  "clap",
@@ -170,9 +170,9 @@ dependencies = [
 
 [[package]]
 name = "hermit-abi"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "322f4de77956e22ed0e5032c359a0f1273f1f7f0d79bfa3b8ffbc730d7fbcc5c"
+checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
 dependencies = [
  "libc",
 ]
