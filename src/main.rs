@@ -1,8 +1,8 @@
 use clap::{App, crate_version, load_yaml};
-use fchat3_log_lib::fchat_index::FChatIndex;
-use fchat3_log_lib::{FChatMessageReader, FChatWriter, fchat_message::FChatMessage};
+use fchat3_log_lib::{ReadSeek, fchat_index::FChatIndex};
+use fchat3_log_lib::{read_fchatmessage_from_buf, FChatWriter, fchat_message::FChatMessage};
 use humantime::{parse_duration, format_duration};
-use log::{info, trace, error};
+use log::{trace, error};
 use pretty_env_logger;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -15,6 +15,7 @@ use chrono::Duration;
 use rayon::prelude::*;
 use std::sync::Mutex;
 use linya::Progress;
+use humansize::{FileSize, file_size_opts as size_opts};
 
 #[derive(Debug)]
 enum Error {
@@ -84,6 +85,26 @@ impl Eq for SortedMessage {
     fn assert_receiver_is_total_eq(&self) { unimplemented!() }
 }
 
+struct Reader<'a> {
+    buf: Box<dyn ReadSeek + 'a>
+}
+
+impl<'a> Reader<'a> {
+    fn new<T: 'a + ReadSeek>(buf: T) -> Self { Self { buf: Box::new(buf) } }
+}
+
+impl Iterator for Reader<'_> {
+    type Item = Result<FChatMessage, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match read_fchatmessage_from_buf(&mut self.buf) {
+            Ok(Some(m)) => Some(Ok(m)),
+            Ok(None) => None,
+            Err(e) => Some(Err(Error::MessageParseError(e))),
+        }
+    }
+}
+
 type CharacterName = OsString;
 type LogName = OsString;
 type Logs = HashMap<LogName, Vec<PathBuf>>;
@@ -110,7 +131,8 @@ fn _main() -> Result<(), Error> {
     }
 
     let mut characters: Characters = HashMap::new();
-
+    let mut size_total: u64 = 0;
+    let mut file_total: u64 = 0;
     {
         let folder_strings: Vec<&str> = matches.values_of("folders").unwrap().collect();
         if folder_strings.len() < 2 {
@@ -137,6 +159,8 @@ fn _main() -> Result<(), Error> {
                             // Log files do not have a extension.
                             if log_file_entry.path().extension() == None {
                                 let log_name = log_file_entry.file_name();
+                                size_total += log_file_entry.metadata().map_err(Error::UnableToOpenFile)?.len();
+                                file_total += 1;
                                 trace!("-- {:?}", log_name);
                                 logs.push((log_name, log_file_entry.path()));
                             }
@@ -153,15 +177,7 @@ fn _main() -> Result<(), Error> {
         }
     }
 
-    {
-        let mut sum = 0;
-        for (_, logs) in &characters {
-            for (_, files) in logs {
-                sum += files.len();
-            }
-        }
-        println!("{} files to merge.", sum)
-    }
+    println!("{} files to merge, {}.", file_total, size_total.file_size(size_opts::CONVENTIONAL).unwrap());
 
     let time_diff = match matches.value_of("time-diff") {
         Some(s) => Duration::from_std(parse_duration(s)?).unwrap(),
@@ -244,13 +260,13 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
 
             let mut w = FChatWriter::new(
                 &mut idx_buf,
-                tab_name
+                tab_name.clone()
             )?;
 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).map_err(Error::UnableToOpenFile)?;
-                for r in FChatMessageReader::new(BufReader::new(f)) {
+                for r in Reader::new(BufReader::new(f)) {
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
                 }
@@ -258,23 +274,37 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
             } else {
                 let mut readers = Vec::with_capacity(locations.len());
                 for p in locations {
-                    readers.push(FChatMessageReader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
+                    readers.push(Reader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
                 }
 
                 let mut messages = BinaryHeap::new();
                 loop {
                     if messages.peek().is_none() {
                         let mut index = 0;
+                        let mut sorted = Vec::with_capacity(readers.len());
                         while index < readers.len() {
-                            if let Some(r) = readers[0].next() {
-                                let message = r?;
-                                messages.push(Reverse(SortedMessage {message}));
-                                index+=1;
-                            } else {
-                                let _ = readers.remove(index);
+                            let reader = &mut readers[index];
+                            match reader.peek() {
+                                Some(Ok(message)) => {
+                                    sorted.push(Reverse(SortedMessage {message: message.clone()}));
+                                    index += 1;
+                                },
+                                Some(Err(_)) => {
+                                    let _ = reader.next().unwrap()?;
+                                    panic!("We were expecting an error to unwrap, but it did not.");
+                                }
+                                None => {
+                                    let _ = readers.remove(index);
+                                }
                             }
                         }
-                        if messages.is_empty() { break };
+                        sorted.sort();
+                        if sorted.is_empty() { 
+                            trace!("finished {}", tab_name);
+                            break
+                        } else {
+                            messages.push(sorted.remove(0));
+                        }
                     } else {
                         let mut index = 0;
                         let oldest_message = messages.peek().unwrap().0.message.clone();
@@ -303,7 +333,6 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                                     index += 1;
                                 }
                                 Some(Err(_)) => {
-                                    // We know an error is coming up, so result it to nothing and catch it.
                                     let _ = reader.next().unwrap()?;
                                     panic!("We were expecting an error to unwrap, but it did not.");
                                 },

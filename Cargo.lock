@@ -150,7 +150,7 @@ dependencies = [
 [[package]]
 name = "fchat3-log-lib"
 version = "0.1.0"
-source = "git+https://github.com/WhiteHusky/fchat3-log-lib?branch=hands-off#321fcf1a617df94b27fd37d16dfbbaea8b01eb4e"
+source = "git+https://github.com/WhiteHusky/fchat3-log-lib?branch=hands-off#7419d34687dac3cb3915b5956b84a624e2b5b853"
 dependencies = [
  "byteorder",
  "chrono",
@@ -163,6 +163,7 @@ dependencies = [
  "chrono",
  "clap",
  "fchat3-log-lib",
+ "humansize",
  "humantime 2.1.0",
  "linya",
  "log",
@@ -178,6 +179,12 @@ checksum = "62b467343b94ba476dcb2500d242dadbb39557df889310ac77c5d99100aaac33"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "humansize"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02296996cb8796d7c6e3bc2d9211b7802812d36999a51bb754123ead7d37d026"
 
 [[package]]
 name = "humantime"
