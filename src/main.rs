@@ -279,68 +279,71 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
 
                 let mut messages = BinaryHeap::new();
                 loop {
-                    if messages.peek().is_none() {
-                        let mut index = 0;
-                        let mut sorted = Vec::with_capacity(readers.len());
-                        while index < readers.len() {
-                            let reader = &mut readers[index];
-                            match reader.peek() {
-                                Some(Ok(message)) => {
-                                    sorted.push(Reverse(SortedMessage {message: message.clone()}));
-                                    index += 1;
-                                },
-                                Some(Err(_)) => {
-                                    let _ = reader.next().unwrap()?;
-                                    panic!("We were expecting an error to unwrap, but it did not.");
-                                }
-                                None => {
-                                    let _ = readers.remove(index);
+                    match messages.peek() {
+                        None => {
+                            let mut index = 0;
+                            let mut sorted = Vec::with_capacity(readers.len());
+                            while index < readers.len() {
+                                let reader = &mut readers[index];
+                                match reader.peek() {
+                                    Some(Ok(message)) => {
+                                        sorted.push(Reverse(SortedMessage {message: message.clone()}));
+                                        index += 1;
+                                    },
+                                    Some(Err(_)) => {
+                                        let _ = reader.next().unwrap()?;
+                                        panic!("We were expecting an error to unwrap, but it did not.");
+                                    }
+                                    None => {
+                                        let _ = readers.remove(index);
+                                    }
                                 }
                             }
-                        }
-                        sorted.sort();
-                        if sorted.is_empty() { 
-                            trace!("finished {}", tab_name);
-                            break
-                        } else {
-                            messages.push(sorted.remove(0));
-                        }
-                    } else {
-                        let mut index = 0;
-                        let oldest_message = messages.peek().unwrap().0.message.clone();
-                        while index < readers.len() {
-                            let reader = &mut readers[index];
-                            match reader.peek() {
-                                Some(Ok(peeked_message)) if peeked_message.datetime  < oldest_message.datetime + time_diff => {
-                                    let mut duplicate = false;
-                                    let check_message = reader.next().unwrap()?;
-                                    for Reverse(SortedMessage {message}) in &messages {
-                                        if check_message.datetime < message.datetime + time_diff {
-                                            if message_compare(&check_message, &message) {
-                                                //trace!("Duplicate Hit: {:?} == {:?}", check_message, message);
-                                                duplicate = true;
+                            sorted.sort();
+                            if sorted.is_empty() { 
+                                trace!("finished {}", tab_name);
+                                break
+                            } else {
+                                messages.push(sorted.remove(0));
+                            }
+                        },
+                        Some(Reverse(SortedMessage { message: oldest_message })) => {
+                            let oldest_message = oldest_message.clone();
+                            let mut index = 0;
+                            while index < readers.len() {
+                                let reader = &mut readers[index];
+                                match reader.peek() {
+                                    Some(Ok(peeked_message)) if peeked_message.datetime  < oldest_message.datetime + time_diff => {
+                                        let mut duplicate = false;
+                                        let check_message = reader.next().unwrap()?;
+                                        for Reverse(SortedMessage {message}) in &messages {
+                                            if check_message.datetime < message.datetime + time_diff {
+                                                if message_compare(&check_message, &message) {
+                                                    //trace!("Duplicate Hit: {:?} == {:?}", check_message, message);
+                                                    duplicate = true;
+                                                    break
+                                                }
+                                            } else {
                                                 break
                                             }
-                                        } else {
-                                            break
                                         }
+                                        if !duplicate {
+                                            messages.push(Reverse(SortedMessage{message:check_message}));
+                                        }
+                                    },
+                                    Some(Ok(_)) => {
+                                        index += 1;
                                     }
-                                    if !duplicate {
-                                        messages.push(Reverse(SortedMessage{message:check_message}));
-                                    }
-                                },
-                                Some(Ok(_)) => {
-                                    index += 1;
+                                    Some(Err(_)) => {
+                                        let _ = reader.next().unwrap()?;
+                                        panic!("We were expecting an error to unwrap, but it did not.");
+                                    },
+                                    None => {let _ = readers.remove(index);},
                                 }
-                                Some(Err(_)) => {
-                                    let _ = reader.next().unwrap()?;
-                                    panic!("We were expecting an error to unwrap, but it did not.");
-                                },
-                                None => {let _ = readers.remove(index);},
                             }
+                            let message = messages.pop().unwrap().0.message;
+                            w.write_message(&mut log_buf, &mut idx_buf, message)?;
                         }
-                        let message = messages.pop().unwrap().0.message;
-                        w.write_message(&mut log_buf, &mut idx_buf, message)?;
                     }
                 }
             }
