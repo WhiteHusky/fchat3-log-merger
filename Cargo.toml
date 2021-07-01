@@ -1,6 +1,6 @@
 [package]
 name = "fchat3-log-merger"
-version = "1.0.3"
+version = "1.0.4"
 authors = ["Carlen White <whitersuburban@gmail.com>"]
 edition = "2018"
 
