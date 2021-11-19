@@ -1,6 +1,5 @@
 name: fchat3-log-merger
 about: Reads multiple F-Chat 3.0 client log folders and merges them together
-author: Carlen White <whitersuburban@gmail.com>
 
 settings:
   - ArgRequiredElseHelp
@@ -14,7 +13,7 @@ args:
       takes_value: true
       required: true
   - time-diff:
-      help: How long the time difference between messages to check for duplicates specified in human time. Defaults to 5min
+      help: How long the time difference between messages to check for duplicates specified in human time. Defaults to 5min.
       short: d
       long: time-diff
       takes_value: true
@@ -23,4 +22,9 @@ args:
       short: o
       long: output
       takes_value: true
-      required: true
+      required_unless: dry-run
+  - dry-run:
+      help: Collects files, but does not do anything.
+      long: dry-run
+      takes_value: false
+      required: false

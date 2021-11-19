@@ -1,8 +1,8 @@
-use clap::{App, crate_version, load_yaml};
+use clap::{App, crate_authors, crate_name, crate_version, load_yaml};
 use fchat3_log_lib::{ReadSeek, fchat_index::FChatIndex};
 use fchat3_log_lib::{read_fchatmessage_from_buf, FChatWriter, fchat_message::FChatMessage};
 use humantime::{parse_duration, format_duration};
-use log::{trace, error};
+use log::{error, trace, warn};
 use pretty_env_logger;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -123,54 +123,83 @@ fn main() {
 fn _main() -> Result<(), Error> {
     pretty_env_logger::init();
     let yml = load_yaml!("app.yaml");
-    let matches = App::from_yaml(yml).version(crate_version!()).get_matches();
-    let output_path = Path::new(matches.value_of("output").unwrap());
-
-    if output_path.exists() {
-        return Err(Error::OutputExists(output_path.to_owned()))
-    }
+    let app = App::from_yaml(yml)
+        .name(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!());
+    let matches = app
+        .get_matches();
+    let dry_run = matches.is_present("dry-run");
 
     let mut characters: Characters = HashMap::new();
     let mut size_total: u64 = 0;
     let mut file_total: u64 = 0;
     {
-        let folder_strings: Vec<&str> = matches.values_of("folders").unwrap().collect();
-        if folder_strings.len() < 2 {
+        let folder_paths  = matches.values_of("folders")
+            .unwrap()
+            .map(|s| {
+                let p = PathBuf::from(s);
+                // Fail early
+                if !p.exists() {
+                    return Err(Error::InputDoesNotExist(p))
+                } else if !p.is_dir() {
+                    return Err(Error::InputIsNotDirectory(p))
+                }
+                Ok(p)
+            })
+            .collect::<Result<Vec<_>,_>>()?;
+        if folder_paths.len() < 2 {
             return Err(Error::NotEnoughInputs)
         }
-        for folder_path in folder_strings.into_iter().map(|s| PathBuf::from(s)) {
-
+        for folder_path in folder_paths {
             if !folder_path.exists() {
                 return Err(Error::InputDoesNotExist(folder_path))
             } else if !folder_path.is_dir() {
                 return Err(Error::InputIsNotDirectory(folder_path))
             }
-            for c in read_dir(folder_path).unwrap() {
-                let log_folder_entry = c.unwrap();
-                if log_folder_entry.metadata().unwrap().is_dir() {
-                    let mut character_folder_path = log_folder_entry.path();
-                    let character_name = character_folder_path.file_name().unwrap().to_owned();
-                    trace!("Getting logs for {:?}", character_name);
-                    character_folder_path.push("logs");
-                    if character_folder_path.exists() {
-                        let mut logs: Vec<(OsString, PathBuf)> = Vec::new();
-                        for e in read_dir(character_folder_path).unwrap() {
-                            let log_file_entry = e.unwrap();
-                            // Log files do not have a extension.
-                            if log_file_entry.path().extension() == None {
-                                let log_name = log_file_entry.file_name();
-                                size_total += log_file_entry.metadata().map_err(Error::UnableToOpenFile)?.len();
-                                file_total += 1;
-                                trace!("-- {:?}", log_name);
-                                logs.push((log_name, log_file_entry.path()));
-                            }
+
+            let log_folders = read_dir(folder_path).unwrap()
+                .map(|e| e.unwrap())
+                .filter(|e| e.metadata().unwrap().is_dir());
+            
+            for log_folder_entry in log_folders {
+                let mut character_folder_path = log_folder_entry.path();
+                let character_name = character_folder_path.file_name().unwrap().to_owned();
+
+                trace!("Getting logs for {:?}", character_name);
+                character_folder_path.push("logs");
+
+                if !character_folder_path.exists() { continue; }
+
+                let mut logs: Vec<(OsString, PathBuf)> = Vec::new();
+                let log_files = read_dir(character_folder_path).unwrap()
+                    .map(|e| e.unwrap())
+                    // Log files do not have a extension.
+                    .filter(|e| e.path().extension() == None )
+                    // Check if an idx is present.
+                    .filter(|e| {
+                        let mut p = e.path();
+                        p.set_extension("idx");
+                        if !p.exists() {
+                            warn!("{:?} is missing its idx file and has been skipped", p);
+                            false
+                        } else {
+                            true
                         }
-                        if logs.len() > 0 {
-                            let character = characters.entry(character_name).or_insert(Logs::new());
-                            for (log_name, entry) in logs {
-                                character.entry(log_name).or_insert(Vec::new()).push(entry);
-                            }
-                        }
+                    });
+                
+                for log_file_entry in log_files {
+                    let log_name = log_file_entry.file_name();
+                    size_total += log_file_entry.metadata().map_err(Error::UnableToOpenFile)?.len();
+                    file_total += 1;
+                    trace!("-- {:?}", log_name);
+                    logs.push((log_name, log_file_entry.path()));
+                }
+                
+                if logs.len() > 0 {
+                    let character = characters.entry(character_name).or_insert(Logs::new());
+                    for (log_name, entry) in logs {
+                        character.entry(log_name).or_insert(Vec::new()).push(entry);
                     }
                 }
             }
@@ -181,10 +210,31 @@ fn _main() -> Result<(), Error> {
 
     let time_diff = match matches.value_of("time-diff") {
         Some(s) => Duration::from_std(parse_duration(s)?).unwrap(),
-        None => Duration::seconds(60*5) // 5 minutes
+        None => Duration::minutes(5)
     };
     
     println!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
+
+    if dry_run {
+        println!("Dry run enabled. Printing out what would be collected...");
+        for (character, log_entries) in characters {
+            println!("=== {} ===", character.to_string_lossy());
+            for (log_name, paths) in log_entries {
+                println!("== {} ==", log_name.to_string_lossy());
+                for path in paths {
+                    println!("{}", path.to_string_lossy());
+                }
+            }
+        }
+        println!("More information could be available. Set the RUST_LOG environment variable.");
+        return Ok(());
+    }
+
+    let output_path = Path::new(matches.value_of("output").unwrap());
+
+    if output_path.exists() {
+        return Err(Error::OutputExists(output_path.to_owned()))
+    }
 
     create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
 
@@ -214,8 +264,8 @@ fn _main() -> Result<(), Error> {
     }
 }
 
-type MergeResults = Vec<Result<Vec<Result<(), Error>>, Error>>;
 type PerLogMergeResults = Vec<Result<(), Error>>;
+type MergeResults = Vec<Result<PerLogMergeResults, Error>>;
 
 fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) -> MergeResults {
     let progress = Mutex::new(Progress::new());
@@ -239,7 +289,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                 )
         );
 
-        let results: PerLogMergeResults = log_entries.par_iter().map(|(log_name, locations)| {
+        Ok(log_entries.par_iter().map(|(log_name, locations)| {
             //info!("Merging tab {}", log_name.to_string_lossy());
             let tab_name = {
                 let mut source_idx = locations[0].clone();
@@ -270,114 +320,126 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
                 }
-            // Otherwise, start queuing messages, matching, sorting by send-time, before rotating them into the output
+            // Otherwise get the oldest message and compare it against up-to
+            // time-diff from each reader before determining to commit it.
+            // All messages within time-diff are added to the queue otherwise
+            // more are pulled from the readers.
             } else {
-                let mut readers = Vec::with_capacity(locations.len());
-                for p in locations {
-                    readers.push(Reader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
-                }
-
-                let mut messages = BinaryHeap::new();
-                loop {
-                    match messages.peek() {
-                        None => {
-                            let mut index = 0;
-                            let mut sorted = Vec::with_capacity(readers.len());
-                            while index < readers.len() {
-                                let reader = &mut readers[index];
-                                match reader.peek() {
-                                    Some(Ok(message)) => {
-                                        sorted.push(Reverse(SortedMessage {message: message.clone()}));
-                                        index += 1;
-                                    },
-                                    Some(Err(_)) => {
-                                        let _ = reader.next().unwrap()?;
-                                        panic!("We were expecting an error to unwrap, but it did not.");
-                                    }
-                                    None => {
-                                        let _ = readers.remove(index);
-                                    }
-                                }
-                            }
-                            sorted.sort();
-                            if sorted.is_empty() { 
-                                trace!("finished {}", tab_name);
-                                break
-                            } else {
-                                messages.push(sorted.remove(0));
-                            }
-                        },
-                        Some(Reverse(SortedMessage { message: oldest_message })) => {
-                            let oldest_message = oldest_message.clone();
-                            let mut index = 0;
-                            while index < readers.len() {
-                                let reader = &mut readers[index];
-                                match reader.peek() {
-                                    Some(Ok(peeked_message)) if peeked_message.datetime  < oldest_message.datetime + time_diff => {
-                                        let mut duplicate = false;
-                                        let check_message = reader.next().unwrap()?;
-                                        for Reverse(SortedMessage {message}) in &messages {
-                                            if check_message.datetime < message.datetime + time_diff {
-                                                if message_compare(&check_message, &message) {
-                                                    //trace!("Duplicate Hit: {:?} == {:?}", check_message, message);
-                                                    duplicate = true;
-                                                    break
-                                                }
-                                            } else {
-                                                break
-                                            }
-                                        }
-                                        if !duplicate {
-                                            messages.push(Reverse(SortedMessage{message:check_message}));
-                                        }
-                                    },
-                                    Some(Ok(_)) => {
-                                        index += 1;
-                                    }
-                                    Some(Err(_)) => {
-                                        let _ = reader.next().unwrap()?;
-                                        panic!("We were expecting an error to unwrap, but it did not.");
-                                    },
-                                    None => {let _ = readers.remove(index);},
-                                }
-                            }
-                            let message = messages.pop().unwrap().0.message;
-                            w.write_message(&mut log_buf, &mut idx_buf, message)?;
-                        }
-                    }
-                }
+                deduplicate_messages(locations, tab_name, time_diff, w, log_buf, idx_buf)?;
             }
             progress.lock().unwrap().inc_and_draw(&bar.lock().unwrap(), 1);
             Ok(())
-        }).collect();
-        Ok(results)
+        }).collect())
     }).collect()
 }
 
-fn message_body(message: &FChatMessage) -> &String {
-    {
-        use fchat3_log_lib::fchat_message::FChatMessageType::*;
-        match &message.body {
-            Message(string) | Action(string) | Ad(string) | Roll(string) | Warn(string)
-            | Event(string) => string,
-        }
-    }
+fn format_message(message: &FChatMessage) -> String {
+    use fchat3_log_lib::fchat_message::FChatMessageType::*;
+    format!("[{}] {}", message.datetime,
+    match &message.body {
+        Message(m)  => format!("{}: {}",   message.sender, m),
+        Action(m)   => format!("{}{}",     message.sender, m),
+        Ad(m)       => format!("{}^ {}",   message.sender, m),
+        Roll(m)     => format!("* {}{}",   message.sender, m),
+        Warn(m)     => format!("! {}: {}", message.sender, m),
+        Event(m)    => format!("? {}{}", message.sender, m),
+    })
+    
 }
 
-fn message_body_type(message: &FChatMessage) -> u8 {
-    {
-        use fchat3_log_lib::fchat_message::FChatMessageType::*;
-        match message.body {
-            Message(_) => 0,
-            Action(_) => 1,
-            Ad(_) => 2,
-            Roll(_) => 3,
-            Warn(_) => 4,
-            Event(_) => 5,
+fn deduplicate_messages(
+    locations: &Vec<PathBuf>,
+    tab_name: String,
+    time_diff: Duration,
+    mut w: FChatWriter,
+    mut log_buf: BufWriter<File>,
+    mut idx_buf: BufWriter<File>
+) -> Result<(), Error> {
+    let mut readers = Vec::with_capacity(locations.len());
+    for p in locations {
+        readers.push(Reader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
+    }
+    let mut messages = BinaryHeap::new();
+    loop {
+        match messages.peek() {
+            None => {
+                /* This peeks into all the readers to seed messages with the
+                   oldest message and will discard the matching message on the
+                   first iteration in the next step but continue normally. This
+                   is to prevent redundant messages appearing at the start of
+                   the logs since messages are popped and pushed, not indexed.
+                */
+                let mut index = 0;
+                let mut sorted = Vec::with_capacity(readers.len());
+                while index < readers.len() {
+                    let reader = &mut readers[index];
+                    match reader.peek() {
+                        Some(Ok(message)) => {
+                            sorted.push(Reverse(SortedMessage {message: message.clone()}));
+                            index += 1;
+                        },
+                        Some(Err(_)) => {
+                            let _ = reader.next().unwrap()?;
+                            panic!("We were expecting an error to unwrap, but it did not.");
+                        }
+                        None => {
+                            let _ = readers.remove(index);
+                        }
+                    }
+                }
+                sorted.sort();
+                if sorted.is_empty() { 
+                    trace!("finished {}", tab_name);
+                    break
+                } else {
+                    messages.push(sorted.remove(0));
+                }
+            },
+            Some(Reverse(SortedMessage { message: oldest_message })) => {
+                // Make a clone since the messages collection will be modified
+                let oldest_message_datetime = oldest_message.datetime.clone();
+                let mut index = 0;
+                while index < readers.len() {
+                    let reader = &mut readers[index];
+                    match reader.peek() {
+                        /* Readers too far in the future are skipped to prevent
+                           the collection from getting too big but also the
+                           message collection should always contain messages
+                           within the current time-diff.
+                        */
+                        Some(Ok(peeked_message))
+                        if peeked_message.datetime >= oldest_message_datetime + time_diff => {
+                            index += 1;
+                        },
+                        Some(Ok(_)) => {
+                            let check_message = reader.next().unwrap()?;
+                            let mut duplicate = false;
+                            for Reverse(SortedMessage {message}) in &messages {
+                                if check_message.sender == message.sender &&
+                                   check_message.body   == message.body
+                                {
+                                    trace!("Duplicate Hit:\n{}\n{}", format_message(&check_message), format_message(&message));
+                                    duplicate = true;
+                                    break
+                                }
+                            }
+                            if !duplicate {
+                                messages.push(Reverse(SortedMessage{message:check_message}));
+                            }
+                        },
+                        Some(Err(_)) => {
+                            reader.next().unwrap()?;
+                            panic!("We were expecting an error to unwrap, but it did not.");
+                        },
+                        None => {let _ = readers.remove(index);},
+                    }
+                }
+                let message = messages.pop().unwrap().0.message;
+                trace!("Message queue: {}", messages.len());
+                trace!("Committing message:\n[{}] {}", tab_name , format_message(&message));
+                w.write_message(&mut log_buf, &mut idx_buf, message)?;
+            }
         }
     }
-}
-
-fn message_compare(a: &FChatMessage, b: &FChatMessage) -> bool {
-    (message_body_type(a) == message_body_type(b)) && (message_body(a) == message_body(b))
+    Ok(())
 }
