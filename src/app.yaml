@@ -28,3 +28,8 @@ args:
       long: dry-run
       takes_value: false
       required: false
+  - dupe-warning:
+      help: Indicate if a file has more than two duplicate messages in the comparison window.
+      long: dupe-warning
+      takes_value: false
+      required: false

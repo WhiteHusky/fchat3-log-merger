@@ -130,6 +130,7 @@ fn _main() -> Result<(), Error> {
     let matches = app
         .get_matches();
     let dry_run = matches.is_present("dry-run");
+    let dupe_warning = matches.is_present("dupe-warning");
 
     let mut characters: Characters = HashMap::new();
     let mut size_total: u64 = 0;
@@ -238,7 +239,7 @@ fn _main() -> Result<(), Error> {
 
     create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
 
-    let results: MergeResults = merge_logs(&characters, output_path, time_diff);
+    let results: MergeResults = merge_logs(&characters, output_path, time_diff, dupe_warning);
     let mut character_index = 0;
     let mut error_count = 0;
     for (character, log_entries) in characters {
@@ -267,7 +268,7 @@ fn _main() -> Result<(), Error> {
 type PerLogMergeResults = Vec<Result<(), Error>>;
 type MergeResults = Vec<Result<PerLogMergeResults, Error>>;
 
-fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) -> MergeResults {
+fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, dupe_warning: bool) -> MergeResults {
     let progress = Mutex::new(Progress::new());
     characters.par_iter().map(|(character_name, log_entries)| {
         let mut options = OpenOptions::new();
@@ -325,7 +326,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration) 
             // All messages within time-diff are added to the queue otherwise
             // more are pulled from the readers.
             } else {
-                deduplicate_messages(locations, tab_name, time_diff, w, log_buf, idx_buf)?;
+                deduplicate_messages(locations, tab_name, time_diff, w, log_buf, idx_buf, &dupe_warning)?;
             }
             progress.lock().unwrap().inc_and_draw(&bar.lock().unwrap(), 1);
             Ok(())
@@ -353,7 +354,8 @@ fn deduplicate_messages(
     time_diff: Duration,
     mut w: FChatWriter,
     mut log_buf: BufWriter<File>,
-    mut idx_buf: BufWriter<File>
+    mut idx_buf: BufWriter<File>,
+    dupe_warning: &bool,
 ) -> Result<(), Error> {
     let mut readers = Vec::with_capacity(locations.len());
     for p in locations {
@@ -414,17 +416,25 @@ fn deduplicate_messages(
                         Some(Ok(_)) => {
                             let check_message = reader.next().unwrap()?;
                             let mut duplicate = false;
+                            let mut duplicate_hit = 0;
                             for Reverse(SortedMessage {message}) in &messages {
                                 if check_message.sender == message.sender &&
                                    check_message.body   == message.body
                                 {
                                     trace!("Duplicate Hit:\n{}\n{}", format_message(&check_message), format_message(&message));
                                     duplicate = true;
-                                    break
+                                    if *dupe_warning {
+                                        duplicate_hit += 1;
+                                        continue
+                                    } else {
+                                        break
+                                    }
                                 }
                             }
                             if !duplicate {
                                 messages.push(Reverse(SortedMessage{message:check_message}));
+                            } else if *dupe_warning && duplicate_hit > 1 {
+                                warn!("Message was duplicated {} times:\n{}", duplicate_hit, format_message(&check_message));
                             }
                         },
                         Some(Err(_)) => {
