@@ -1,6 +1,6 @@
 use clap::{App, crate_authors, crate_name, crate_version, load_yaml};
-use fchat3_log_lib::{ReadSeek, fchat_index::FChatIndex};
-use fchat3_log_lib::{read_fchatmessage_from_buf, FChatWriter, fchat_message::FChatMessage};
+use fchat3_log_lib::{fchat_index::FChatIndex};
+use fchat3_log_lib::{FChatWriter, fchat_message::FChatMessage};
 use humantime::{parse_duration, format_duration};
 use log::{error, trace, warn};
 use pretty_env_logger;
@@ -8,7 +8,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
-use std::io::{BufReader, BufWriter};
+use std::io::{BufWriter};
 use std::path::{Path, PathBuf};
 use std::process;
 use chrono::Duration;
@@ -17,93 +17,14 @@ use std::sync::Mutex;
 use linya::Progress;
 use humansize::{FileSize, file_size_opts as size_opts};
 
-#[derive(Debug)]
-enum Error {
-    OutputExists(PathBuf),
-    NotEnoughInputs,
-    InputDoesNotExist(PathBuf),
-    InputIsNotDirectory(PathBuf),
-    BadTimeDiff(humantime::DurationError),
-    UnableToCreateDirectory(std::io::Error),
-    MessageParseError(fchat3_log_lib::error::Error),
-    UnableToOpenIndex(std::io::Error),
-    UnableToOpenFile(std::io::Error),
-    ExitingWithError
-}
+mod error;
+pub(crate) use error::Error;
 
-impl From<fchat3_log_lib::error::Error> for Error {
-    fn from(e: fchat3_log_lib::error::Error) -> Self {
-        Self::MessageParseError(e)
-    }
-}
+mod sorted_message;
+pub(crate) use sorted_message::SortedMessage;
 
-impl From<humantime::DurationError> for Error {
-    fn from(e: humantime::DurationError) -> Self {
-        Self::BadTimeDiff(e)
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::OutputExists(p) => write!(f, "Output folder already exists: {}", p.to_string_lossy()),
-            Error::NotEnoughInputs => write!(f, "Specify more than one input folder."),
-            Error::InputDoesNotExist(p) => write!(f, "Input folder does not exists: {}", p.to_string_lossy()),
-            Error::InputIsNotDirectory(p) => write!(f, "Input folder is not a directory: {}", p.to_string_lossy()),
-            Error::BadTimeDiff(e) => e.fmt(f),
-            Error::UnableToCreateDirectory(e) => write!(f, "Unable to create directory: {}", e),
-            Error::MessageParseError(e) => write!(f, "Parsing message failed: {}", e),
-            Error::UnableToOpenIndex(e) => write!(f, "Unable to open index: {}", e),
-            Error::ExitingWithError => write!(f, "Exiting with error. Check output."),
-            Error::UnableToOpenFile(e) => write!(f, "Unable to open file: {}", e),
-        }
-    }
-}
-struct SortedMessage {
-    message: FChatMessage
-}
-
-impl Ord for SortedMessage {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.message.datetime.cmp(&other.message.datetime)
-    }
-}
-
-impl PartialOrd for SortedMessage {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for SortedMessage {
-    fn eq(&self, other: &Self) -> bool {
-        self.message.datetime == other.message.datetime
-    }
-}
-
-impl Eq for SortedMessage {
-    fn assert_receiver_is_total_eq(&self) { unimplemented!() }
-}
-
-struct Reader<'a> {
-    buf: Box<dyn ReadSeek + 'a>
-}
-
-impl<'a> Reader<'a> {
-    fn new<T: 'a + ReadSeek>(buf: T) -> Self { Self { buf: Box::new(buf) } }
-}
-
-impl Iterator for Reader<'_> {
-    type Item = Result<FChatMessage, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match read_fchatmessage_from_buf(&mut self.buf) {
-            Ok(Some(m)) => Some(Ok(m)),
-            Ok(None) => None,
-            Err(e) => Some(Err(Error::MessageParseError(e))),
-        }
-    }
-}
+mod reader;
+pub(crate) use reader::Reader;
 
 type CharacterName = OsString;
 type LogName = OsString;
@@ -317,7 +238,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0]).map_err(Error::UnableToOpenFile)?;
-                for r in Reader::new(BufReader::new(f)) {
+                for r in reader::Reader::new_buffered(f) {
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
                 }
@@ -359,7 +280,8 @@ fn deduplicate_messages(
 ) -> Result<(), Error> {
     let mut readers = Vec::with_capacity(locations.len());
     for p in locations {
-        readers.push(Reader::new(BufReader::new(File::open(p).map_err(Error::UnableToOpenFile)?)).peekable())
+        let file = File::open(p).map_err(Error::UnableToOpenFile)?;
+        readers.push(Reader::new_buffered(file).peekable())
     }
     let mut messages = BinaryHeap::new();
     loop {
