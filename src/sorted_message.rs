@@ -1,12 +1,10 @@
 use fchat3_log_lib::fchat_message::FChatMessage;
 
-pub(crate) struct SortedMessage {
-    pub(crate) message: FChatMessage
-}
+pub(crate) struct SortedMessage(pub(crate) FChatMessage);
 
 impl Ord for SortedMessage {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.message.datetime.cmp(&other.message.datetime)
+        self.0.datetime.cmp(&other.0.datetime)
     }
 }
 
@@ -18,7 +16,7 @@ impl PartialOrd for SortedMessage {
 
 impl PartialEq for SortedMessage {
     fn eq(&self, other: &Self) -> bool {
-        self.message.datetime == other.message.datetime
+        self.0.datetime == other.0.datetime
     }
 }
 

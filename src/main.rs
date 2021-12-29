@@ -299,7 +299,7 @@ fn deduplicate_messages(
                     let reader = &mut readers[index];
                     match reader.peek() {
                         Some(Ok(message)) => {
-                            sorted.push(Reverse(SortedMessage {message: message.clone()}));
+                            sorted.push(Reverse(SortedMessage(message.clone())));
                             index += 1;
                         },
                         Some(Err(_)) => {
@@ -319,7 +319,7 @@ fn deduplicate_messages(
                     messages.push(sorted.remove(0));
                 }
             },
-            Some(Reverse(SortedMessage { message: oldest_message })) => {
+            Some(Reverse(SortedMessage(oldest_message))) => {
                 // Make a clone since the messages collection will be modified
                 let oldest_message_datetime = oldest_message.datetime.clone();
                 let mut index = 0;
@@ -339,7 +339,7 @@ fn deduplicate_messages(
                             let check_message = reader.next().unwrap()?;
                             let mut duplicate = false;
                             let mut duplicate_hit = 0;
-                            for Reverse(SortedMessage {message}) in &messages {
+                            for Reverse(SortedMessage(message)) in &messages {
                                 if check_message.sender == message.sender &&
                                    check_message.body   == message.body
                                 {
@@ -354,7 +354,7 @@ fn deduplicate_messages(
                                 }
                             }
                             if !duplicate {
-                                messages.push(Reverse(SortedMessage{message:check_message}));
+                                messages.push(Reverse(SortedMessage(check_message)));
                             } else if *dupe_warning && duplicate_hit > 1 {
                                 warn!("Message was duplicated {} times:\n{}", duplicate_hit, format_message(&check_message));
                             }
@@ -366,7 +366,7 @@ fn deduplicate_messages(
                         None => {let _ = readers.remove(index);},
                     }
                 }
-                let message = messages.pop().unwrap().0.message;
+                let Reverse(SortedMessage(message)) = messages.pop().unwrap();
                 trace!("Message queue: {}", messages.len());
                 trace!("Committing message:\n[{}] {}", tab_name , format_message(&message));
                 w.write_message(&mut log_buf, &mut idx_buf, message)?;
