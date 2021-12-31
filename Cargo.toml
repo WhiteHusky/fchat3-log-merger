@@ -36,3 +36,6 @@ version = "~0"
 
 [dependencies.humansize]
 version = "~1"
+
+[dependencies.thiserror]
+version = "~1"

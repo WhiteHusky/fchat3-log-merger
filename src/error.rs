@@ -1,59 +1,30 @@
 use std::io;
 
 use std::path::PathBuf;
+use thiserror::Error as E;
 
-#[derive(Debug)]
+#[derive(E, Debug)]
 pub(crate) enum Error {
+    #[error("Output folder `{0}` already exists")]
     OutputExists(PathBuf),
+    #[error("Specify more than one input folder")]
     NotEnoughInputs,
+    #[error("Input folder `{0}` does not exist")]
     InputDoesNotExist(PathBuf),
+    #[error("Input folder `{0}` is not a directory")]
     InputIsNotDirectory(PathBuf),
-    BadTimeDiff(humantime::DurationError),
+    #[error("{0}")]
+    BadTimeDiff(#[from] humantime::DurationError),
+    #[error("Unable to create directory `{0}` due to: {1}")]
     UnableToCreateDirectory(PathBuf, io::Error),
-    MessageParseError(fchat3_log_lib::error::Error),
+    #[error("Failed to parse a message due to: {0}")]
+    MessageParseError(#[from] fchat3_log_lib::error::Error),
+    #[error("Unable to open index `{0}` due to: {1}")]
     UnableToOpenIndex(PathBuf, io::Error),
-    UnableToOpenFile(PathBuf, io::Error),
+    #[error("Unable to open log `{0}` due to: {1}")]
+    UnableToOpenLog(PathBuf, io::Error),
+    #[error("Unable to open directory `{0}` due to: {1}")]
     UnableToOpenDirectory(PathBuf, io::Error),
+    #[error("Exiting with error. Check output.")]
     ExitingWithError
-}
-
-impl From<fchat3_log_lib::error::Error> for Error {
-    fn from(e: fchat3_log_lib::error::Error) -> Self {
-        Self::MessageParseError(e)
-    }
-}
-
-impl From<humantime::DurationError> for Error {
-    fn from(e: humantime::DurationError) -> Self {
-        Self::BadTimeDiff(e)
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::OutputExists(p) =>
-                write!(f, "Output folder already exists: {}", p.to_string_lossy()),
-            Error::NotEnoughInputs =>
-                write!(f, "Specify more than one input folder."),
-            Error::InputDoesNotExist(p) =>
-                write!(f, "Input folder does not exists: {}", p.to_string_lossy()),
-            Error::InputIsNotDirectory(p) =>
-                write!(f, "Input folder is not a directory: {}", p.to_string_lossy()),
-            Error::BadTimeDiff(e) =>
-                e.fmt(f),
-            Error::UnableToCreateDirectory(p, e) =>
-                write!(f, "Unable to create directory `{}`: {}", p.display(), e),
-            Error::MessageParseError(e) =>
-                write!(f, "Parsing message failed: {}", e),
-            Error::UnableToOpenIndex(p, e) =>
-                write!(f, "Unable to open index `{}` due to: {}", p.display(), e),
-            Error::ExitingWithError =>
-                write!(f, "Exiting with error. Check output."),
-            Error::UnableToOpenFile(p, e) =>
-                write!(f, "Unable to open file `{}` due to: {}", p.display(), e),
-            Error::UnableToOpenDirectory(p, e) =>
-                write!(f, "Unable to open directory `{}` due to: {}", p.display(), e),
-        }
-    }
 }

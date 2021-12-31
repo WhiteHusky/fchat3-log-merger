@@ -176,7 +176,7 @@ fn collect_logs(folder_paths: Vec<PathBuf>) -> Result<(Characters, u64, u64), Er
             for log_file_entry in log_files {
                 let log_name = log_file_entry.file_name();
                 size_total += log_file_entry.metadata()
-                    .map_err(|e| Error::UnableToOpenFile(log_file_entry.path(), e))?.len();
+                    .map_err(|e| Error::UnableToOpenLog(log_file_entry.path(), e))?.len();
                 file_total += 1;
                 trace!("-- {:?}", log_name);
                 logs.push((log_name, log_file_entry.path()));
@@ -236,9 +236,9 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
             idx_path.set_extension("idx");
 
             let mut idx_buf = BufWriter::new(options.open(&idx_path)
-                .map_err(|e| Error::UnableToOpenFile(idx_path, e))?);
+                .map_err(|e| Error::UnableToOpenIndex(idx_path, e))?);
             let mut log_buf = BufWriter::new(options.open(&log_path)
-                .map_err(|e| Error::UnableToOpenFile(log_path, e))?);
+                .map_err(|e| Error::UnableToOpenLog(log_path, e))?);
 
             let mut w = FChatWriter::new(
                 &mut idx_buf,
@@ -248,7 +248,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
                 let f = File::open(&locations[0])
-                    .map_err(|e| Error::UnableToOpenFile(locations[0].clone(), e))?;
+                    .map_err(|e| Error::UnableToOpenLog(locations[0].clone(), e))?;
                 for r in reader::Reader::new_buffered(f) {
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
@@ -291,7 +291,7 @@ fn deduplicate_messages(
 ) -> Result<(), Error> {
     let mut readers = Vec::with_capacity(locations.len());
     for p in locations {
-        let file = File::open(p).map_err(|e| Error::UnableToOpenFile(p.into(), e))?;
+        let file = File::open(p).map_err(|e| Error::UnableToOpenLog(p.into(), e))?;
         readers.push(Reader::new_buffered(file).peekable())
     }
     let mut messages = BinaryHeap::new();
