@@ -43,7 +43,7 @@ impl std::fmt::Display for Error {
             Error::BadTimeDiff(e) =>
                 e.fmt(f),
             Error::UnableToCreateDirectory(p, e) =>
-                write!(f, "Unable to create directory: {}", e),
+                write!(f, "Unable to create directory `{}`: {}", p.display(), e),
             Error::MessageParseError(e) =>
                 write!(f, "Parsing message failed: {}", e),
             Error::UnableToOpenIndex(p, e) =>
