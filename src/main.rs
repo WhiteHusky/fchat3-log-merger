@@ -26,8 +26,8 @@ pub(crate) use sorted_message::SortedMessage;
 mod reader;
 pub(crate) use reader::Reader;
 
-type CharacterName = OsString;
-type LogName = OsString;
+type CharacterName = String;
+type LogName = String;
 type Logs = HashMap<LogName, Vec<PathBuf>>;
 type Characters = HashMap<CharacterName, Logs>;
 
@@ -52,81 +52,25 @@ fn _main() -> Result<(), Error> {
         .get_matches();
     let dry_run = matches.is_present("dry-run");
     let dupe_warning = matches.is_present("dupe-warning");
-
-    let mut characters: Characters = HashMap::new();
-    let mut size_total: u64 = 0;
-    let mut file_total: u64 = 0;
-    {
-        let folder_paths  = matches.values_of("folders")
-            .unwrap()
-            .map(|s| {
-                let p = PathBuf::from(s);
-                // Fail early
-                if !p.exists() {
-                    return Err(Error::InputDoesNotExist(p))
-                } else if !p.is_dir() {
-                    return Err(Error::InputIsNotDirectory(p))
-                }
-                Ok(p)
-            })
-            .collect::<Result<Vec<_>,_>>()?;
-        if folder_paths.len() < 2 {
-            return Err(Error::NotEnoughInputs)
-        }
-        for folder_path in folder_paths {
-            if !folder_path.exists() {
-                return Err(Error::InputDoesNotExist(folder_path))
-            } else if !folder_path.is_dir() {
-                return Err(Error::InputIsNotDirectory(folder_path))
+    let folder_paths  = matches.values_of("folders")
+        .unwrap()
+        .map(|s| {
+            let p = PathBuf::from(s);
+            // Fail early
+            if !p.exists() {
+                return Err(Error::InputDoesNotExist(p))
+            } else if !p.is_dir() {
+                return Err(Error::InputIsNotDirectory(p))
             }
-
-            let log_folders = read_dir(folder_path).unwrap()
-                .map(|e| e.unwrap())
-                .filter(|e| e.metadata().unwrap().is_dir());
-            
-            for log_folder_entry in log_folders {
-                let mut character_folder_path = log_folder_entry.path();
-                let character_name = character_folder_path.file_name().unwrap().to_owned();
-
-                trace!("Getting logs for {:?}", character_name);
-                character_folder_path.push("logs");
-
-                if !character_folder_path.exists() { continue; }
-
-                let mut logs: Vec<(OsString, PathBuf)> = Vec::new();
-                let log_files = read_dir(character_folder_path).unwrap()
-                    .map(|e| e.unwrap())
-                    // Log files do not have a extension.
-                    .filter(|e| e.path().extension() == None )
-                    // Check if an idx is present.
-                    .filter(|e| {
-                        let mut p = e.path();
-                        p.set_extension("idx");
-                        if !p.exists() {
-                            warn!("{:?} is missing its idx file and has been skipped", p);
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                
-                for log_file_entry in log_files {
-                    let log_name = log_file_entry.file_name();
-                    size_total += log_file_entry.metadata().map_err(Error::UnableToOpenFile)?.len();
-                    file_total += 1;
-                    trace!("-- {:?}", log_name);
-                    logs.push((log_name, log_file_entry.path()));
-                }
-                
-                if logs.len() > 0 {
-                    let character = characters.entry(character_name).or_insert(Logs::new());
-                    for (log_name, entry) in logs {
-                        character.entry(log_name).or_insert(Vec::new()).push(entry);
-                    }
-                }
-            }
-        }
+            Ok(p)
+        })
+        .collect::<Result<Vec<_>,_>>()?;
+    
+    if folder_paths.len() < 2 {
+        return Err(Error::NotEnoughInputs)
     }
+
+    let (characters, size_total, file_total) = collect_logs(folder_paths)?;
 
     println!("{} files to merge, {}.", file_total, size_total.file_size(size_opts::CONVENTIONAL).unwrap());
 
@@ -140,9 +84,9 @@ fn _main() -> Result<(), Error> {
     if dry_run {
         println!("Dry run enabled. Printing out what would be collected...");
         for (character, log_entries) in characters {
-            println!("=== {} ===", character.to_string_lossy());
+            println!("=== {} ===", character);
             for (log_name, paths) in log_entries {
-                println!("== {} ==", log_name.to_string_lossy());
+                println!("== {} ==", log_name);
                 for path in paths {
                     println!("{}", path.to_string_lossy());
                 }
@@ -158,7 +102,7 @@ fn _main() -> Result<(), Error> {
         return Err(Error::OutputExists(output_path.to_owned()))
     }
 
-    create_dir(output_path).map_err(Error::UnableToCreateDirectory)?;
+    create_dir(output_path).map_err(|e| Error::UnableToCreateDirectory(output_path.into(), e))?;
 
     let results: MergeResults = merge_logs(&characters, output_path, time_diff, dupe_warning);
     let mut character_index = 0;
@@ -166,13 +110,13 @@ fn _main() -> Result<(), Error> {
     for (character, log_entries) in characters {
         if let Err(e) = &results[character_index] {
             error_count += 1;
-            error!("{} had an error: {}", character.to_string_lossy(), e);
+            error!("{} had an error: {}", character, e);
         }
         let mut log_entry_index = 0;
         for (log_name, _) in log_entries {
             if let Err(e) = &results[character_index].as_ref().unwrap()[log_entry_index] {
                 error_count += 1;
-                error!("{} for {} had an error: {}", log_name.to_string_lossy(), character.to_string_lossy(), e);
+                error!("{} for {} had an error: {}", log_name, character, e);
             }
             log_entry_index += 1;
         }
@@ -184,6 +128,69 @@ fn _main() -> Result<(), Error> {
     } else {
         Ok(())
     }
+}
+
+fn collect_logs(folder_paths: Vec<PathBuf>) -> Result<(Characters, u64, u64), Error> {
+    let mut characters = Characters::new();
+    let mut size_total: u64 = 0;
+    let mut file_total: u64 = 0;
+    for folder_path in folder_paths {
+        if !folder_path.exists() {
+            return Err(Error::InputDoesNotExist(folder_path))
+        } else if !folder_path.is_dir() {
+            return Err(Error::InputIsNotDirectory(folder_path))
+        }
+
+        let log_folders = read_dir(&folder_path)
+            .map_err(|e| Error::UnableToOpenDirectory(folder_path, e))?
+            .map(|e| e.unwrap())
+            .filter(|e| e.metadata().unwrap().is_dir());
+    
+        for log_folder_entry in log_folders {
+            let mut character_folder_path = log_folder_entry.path();
+            let character_name = character_folder_path.file_name().unwrap().to_owned();
+
+            trace!("Getting logs for {:?}", character_name);
+            character_folder_path.push("logs");
+
+            if !character_folder_path.exists() { continue; }
+
+            let mut logs: Vec<(OsString, PathBuf)> = Vec::new();
+            let log_files = read_dir(&character_folder_path)
+                .map_err(|e| Error::UnableToOpenDirectory(character_folder_path, e))?
+                .map(|e| e.unwrap())
+                // Log files do not have a extension.
+                .filter(|e| e.path().extension() == None )
+                // Check if an idx is present. Required to get correct tab name.
+                .filter(|e| {
+                    let mut p = e.path();
+                    p.set_extension("idx");
+                    if !p.exists() {
+                        warn!("{:?} is missing its idx file and has been skipped", p);
+                        false
+                    } else {
+                        true
+                    }
+                });
+        
+            for log_file_entry in log_files {
+                let log_name = log_file_entry.file_name();
+                size_total += log_file_entry.metadata()
+                    .map_err(|e| Error::UnableToOpenFile(log_file_entry.path(), e))?.len();
+                file_total += 1;
+                trace!("-- {:?}", log_name);
+                logs.push((log_name, log_file_entry.path()));
+            }
+        
+            if logs.len() > 0 {
+                let character = characters.entry(character_name.to_string_lossy().into()).or_insert(Logs::new());
+                for (log_name, entry) in logs {
+                    character.entry(log_name.to_string_lossy().into()).or_insert(Vec::new()).push(entry);
+                }
+            }
+        }
+    }
+    Ok((characters, size_total, file_total))
 }
 
 type PerLogMergeResults = Vec<Result<(), Error>>;
@@ -199,7 +206,8 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
         output_log_location.push(character_name.clone());
         output_log_location.push("logs");
 
-        create_dir_all(output_log_location.clone()).map_err(Error::UnableToCreateDirectory)?;
+        create_dir_all(&output_log_location)
+            .map_err(|e| Error::UnableToCreateDirectory(output_log_location.clone(), e))?;
 
         let bar = Mutex::new(
             progress
@@ -207,7 +215,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
                 .unwrap()
                 .bar(
                     log_entries.len(),
-                    format!("{}", character_name.to_string_lossy())
+                    format!("{}", character_name)
                 )
         );
 
@@ -217,7 +225,7 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
                 let mut source_idx = locations[0].clone();
                 source_idx.set_extension("idx");
 
-                let mut f = File::open(source_idx).map_err(Error::UnableToOpenIndex)?;
+                let mut f = File::open(&source_idx).map_err(|e| Error::UnableToOpenIndex(source_idx, e))?;
                 FChatIndex::read_header_from_buf(&mut f)?.name
             };
 
@@ -227,8 +235,10 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
             let mut idx_path = log_path.clone();
             idx_path.set_extension("idx");
 
-            let mut idx_buf = BufWriter::new(options.open(idx_path).map_err(Error::UnableToOpenFile)?);
-            let mut log_buf = BufWriter::new(options.open(log_path).map_err(Error::UnableToOpenFile)?);
+            let mut idx_buf = BufWriter::new(options.open(&idx_path)
+                .map_err(|e| Error::UnableToOpenFile(idx_path, e))?);
+            let mut log_buf = BufWriter::new(options.open(&log_path)
+                .map_err(|e| Error::UnableToOpenFile(log_path, e))?);
 
             let mut w = FChatWriter::new(
                 &mut idx_buf,
@@ -237,7 +247,8 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
 
             // For single locations, just write them out without comparing.
             if locations.len() == 1 {
-                let f = File::open(&locations[0]).map_err(Error::UnableToOpenFile)?;
+                let f = File::open(&locations[0])
+                    .map_err(|e| Error::UnableToOpenFile(locations[0].clone(), e))?;
                 for r in reader::Reader::new_buffered(f) {
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
@@ -264,7 +275,7 @@ fn format_message(message: &FChatMessage) -> String {
         Ad(m)       => format!("{}^ {}",   message.sender, m),
         Roll(m)     => format!("* {}{}",   message.sender, m),
         Warn(m)     => format!("! {}: {}", message.sender, m),
-        Event(m)    => format!("? {}{}", message.sender, m),
+        Event(m)    => format!("? {}{}",   message.sender, m),
     })
     
 }
@@ -280,7 +291,7 @@ fn deduplicate_messages(
 ) -> Result<(), Error> {
     let mut readers = Vec::with_capacity(locations.len());
     for p in locations {
-        let file = File::open(p).map_err(Error::UnableToOpenFile)?;
+        let file = File::open(p).map_err(|e| Error::UnableToOpenFile(p.into(), e))?;
         readers.push(Reader::new_buffered(file).peekable())
     }
     let mut messages = BinaryHeap::new();
@@ -361,7 +372,7 @@ fn deduplicate_messages(
                         },
                         Some(Err(_)) => {
                             reader.next().unwrap()?;
-                            panic!("We were expecting an error to unwrap, but it did not.");
+                            unreachable!("We were expecting an error to unwrap, but it did not.");
                         },
                         None => {let _ = readers.remove(index);},
                     }
