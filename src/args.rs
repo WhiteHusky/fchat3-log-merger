@@ -6,7 +6,7 @@ use humantime::{parse_duration, format_duration};
 
 /// Tuple struct containing duration, used for arg parsing.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TimeDiffArg(pub(crate) Duration);
+pub(crate) struct TimeDiffArg(Duration);
 
 impl FromStr for TimeDiffArg {
     type Err = crate::Error;
@@ -19,6 +19,13 @@ impl FromStr for TimeDiffArg {
 impl Into<std::time::Duration> for TimeDiffArg {
     fn into(self) -> std::time::Duration {
         self.0.to_std().unwrap()
+    }
+}
+
+impl Into<Duration> for TimeDiffArg {
+    #[inline(always)]
+    fn into(self) -> Duration {
+        self.0
     }
 }
 

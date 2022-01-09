@@ -1,6 +1,5 @@
 use fchat3_log_lib::{fchat_index::FChatIndex};
 use fchat3_log_lib::{FChatWriter, fchat_message::FChatMessage};
-use humantime::format_duration;
 use log::{error, trace, warn};
 use pretty_env_logger;
 use std::cmp::Reverse;
@@ -68,7 +67,7 @@ fn _main() -> Result<(), Error> {
 
     println!("{} files to merge, {}.", file_total, size_total.file_size(size_opts::CONVENTIONAL).unwrap());
     
-    println!("Merging messages with at most a difference in the future of {}.", format_duration(args.time_diff.into()));
+    println!("Merging messages with at most a difference in the future of {}.", args.time_diff);
 
     if args.dry_run {
         println!("Dry run enabled. Printing out what would be collected...");
@@ -93,7 +92,7 @@ fn _main() -> Result<(), Error> {
 
     create_dir(&output_path).map_err(|e| Error::UnableToCreateDirectory(output_path.clone(), e))?;
 
-    let results: MergeResults = merge_logs(&characters, &output_path, args.time_diff.0, args.dupe_warning);
+    let results: MergeResults = merge_logs(&characters, &output_path, args.time_diff.into(), args.dupe_warning);
     let mut character_index = 0;
     let mut error_count = 0;
     for (character, log_entries) in characters {
