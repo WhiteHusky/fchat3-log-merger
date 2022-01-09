@@ -29,6 +29,13 @@ impl Into<std::time::Duration> for TimeDiffArg {
     }
 }
 
+impl From<Duration> for TimeDiffArg {
+    #[inline(always)]
+    fn from(d: Duration) -> Self {
+        Self(d)
+    }
+}
+
 impl Into<Duration> for TimeDiffArg {
     #[inline(always)]
     fn into(self) -> Duration {
@@ -50,7 +57,7 @@ pub(crate) struct Args {
     pub(crate) folders: Vec<PathBuf>,
 
     /// How long the time difference between messages to check for duplicates specified in human time.
-    #[clap(short = 'd', long, default_value_t = TimeDiffArg(Duration::minutes(5)))]
+    #[clap(short = 'd', long, default_value_t = TimeDiffArg::from(Duration::minutes(5)))]
     pub(crate) time_diff: TimeDiffArg,
 
     /// Folder to write the merged logs to.
