@@ -1,7 +1,6 @@
-use clap::{App, crate_authors, crate_name, crate_version, load_yaml};
 use fchat3_log_lib::{fchat_index::FChatIndex};
 use fchat3_log_lib::{FChatWriter, fchat_message::FChatMessage};
-use humantime::{parse_duration, format_duration};
+use humantime::format_duration;
 use log::{error, trace, warn};
 use pretty_env_logger;
 use std::cmp::Reverse;
@@ -16,6 +15,10 @@ use rayon::prelude::*;
 use std::sync::Mutex;
 use linya::Progress;
 use humansize::{FileSize, file_size_opts as size_opts};
+use clap::StructOpt;
+
+mod args;
+pub(crate) use args::Args;
 
 mod error;
 pub(crate) use error::Error;
@@ -43,19 +46,10 @@ fn main() {
 
 fn _main() -> Result<(), Error> {
     pretty_env_logger::init();
-    let yml = load_yaml!("app.yaml");
-    let app = App::from_yaml(yml)
-        .name(crate_name!())
-        .version(crate_version!())
-        .author(crate_authors!());
-    let matches = app
-        .get_matches();
-    let dry_run = matches.is_present("dry-run");
-    let dupe_warning = matches.is_present("dupe-warning");
-    let folder_paths  = matches.values_of("folders")
-        .unwrap()
-        .map(|s| {
-            let p = PathBuf::from(s);
+    let args = Args::parse();
+    let folder_paths  = args.folders
+        .into_iter()
+        .map(|p| {
             // Fail early
             if !p.exists() {
                 return Err(Error::InputDoesNotExist(p))
@@ -73,15 +67,10 @@ fn _main() -> Result<(), Error> {
     let (characters, size_total, file_total) = collect_logs(folder_paths)?;
 
     println!("{} files to merge, {}.", file_total, size_total.file_size(size_opts::CONVENTIONAL).unwrap());
-
-    let time_diff = match matches.value_of("time-diff") {
-        Some(s) => Duration::from_std(parse_duration(s)?).unwrap(),
-        None => Duration::minutes(5)
-    };
     
-    println!("Merging messages with at most a difference in the future of {}.", format_duration(time_diff.to_std().unwrap()));
+    println!("Merging messages with at most a difference in the future of {}.", format_duration(args.time_diff.into()));
 
-    if dry_run {
+    if args.dry_run {
         println!("Dry run enabled. Printing out what would be collected...");
         for (character, log_entries) in characters {
             println!("=== {} ===", character);
@@ -96,15 +85,15 @@ fn _main() -> Result<(), Error> {
         return Ok(());
     }
 
-    let output_path = Path::new(matches.value_of("output").unwrap());
+    let output_path = args.output.unwrap();
 
     if output_path.exists() {
         return Err(Error::OutputExists(output_path.to_owned()))
     }
 
-    create_dir(output_path).map_err(|e| Error::UnableToCreateDirectory(output_path.into(), e))?;
+    create_dir(&output_path).map_err(|e| Error::UnableToCreateDirectory(output_path.clone(), e))?;
 
-    let results: MergeResults = merge_logs(&characters, output_path, time_diff, dupe_warning);
+    let results: MergeResults = merge_logs(&characters, &output_path, args.time_diff.0, args.dupe_warning);
     let mut character_index = 0;
     let mut error_count = 0;
     for (character, log_entries) in characters {
