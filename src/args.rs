@@ -8,6 +8,13 @@ use humantime::{parse_duration, format_duration};
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TimeDiffArg(Duration);
 
+impl TimeDiffArg {
+    #[inline(always)]
+    fn duration(self) -> Duration {
+        self.0
+    }
+}
+
 impl FromStr for TimeDiffArg {
     type Err = crate::Error;
 
@@ -25,7 +32,7 @@ impl Into<std::time::Duration> for TimeDiffArg {
 impl Into<Duration> for TimeDiffArg {
     #[inline(always)]
     fn into(self) -> Duration {
-        self.0
+        self.duration()
     }
 }
 
