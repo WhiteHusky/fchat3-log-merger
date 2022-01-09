@@ -4,6 +4,7 @@ version = "1.1.0"
 authors = ["Carlen White <whitersuburban@gmail.com>"]
 edition = "2021"
 description = "Reads multiple F-Chat 3.0 client log folders and merges them together"
+license = "GPL-3.0-only"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
