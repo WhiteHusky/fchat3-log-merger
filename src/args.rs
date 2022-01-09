@@ -4,6 +4,7 @@ use chrono::Duration;
 use clap::Parser;
 use humantime::{parse_duration, format_duration};
 
+/// Tuple struct containing duration, used for arg parsing.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TimeDiffArg(pub(crate) Duration);
 
