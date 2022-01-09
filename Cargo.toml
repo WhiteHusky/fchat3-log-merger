@@ -18,25 +18,25 @@ version = "^3.0.4"
 features = ["derive"]
 
 [dependencies.humantime]
-version = "~2"
+version = "^2.1.0"
 
 [dependencies.log]
-version = "~0"
+version = "^0.4.14"
 
 [dependencies.pretty_env_logger]
-version = "~0"
+version = "^0.4.0"
 
 [dependencies.chrono]
-version = "~0"
+version = "^0.4.19"
 
 [dependencies.rayon]
-version = "~1"
+version = "^1.5.1"
 
 [dependencies.linya]
-version = "~0"
+version = "^0.2.1"
 
 [dependencies.humansize]
-version = "~1"
+version = "^1.1.1"
 
 [dependencies.thiserror]
-version = "~1"
+version = "^1.0.30"
