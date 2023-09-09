@@ -1,6 +1,6 @@
 use fchat3_log_lib::fchat_message::FChatMessage;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SortedMessage(pub(crate) FChatMessage);
 
 impl From<FChatMessage> for SortedMessage {
@@ -19,14 +19,4 @@ impl PartialOrd for SortedMessage {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
-}
-
-impl PartialEq for SortedMessage {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.datetime == other.0.datetime
-    }
-}
-
-impl Eq for SortedMessage {
-    fn assert_receiver_is_total_eq(&self) { unimplemented!() }
 }

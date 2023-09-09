@@ -1,20 +1,20 @@
-use fchat3_log_lib::{fchat_index::FChatIndex};
+use fchat3_log_lib::fchat_index::FChatIndex;
 use fchat3_log_lib::{FChatWriter, fchat_message::FChatMessage};
-use log::{error, trace, warn};
-use pretty_env_logger;
+use clap::Parser;
+use log::{error, trace, warn, info, debug};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, create_dir, create_dir_all, read_dir};
-use std::io::{BufWriter};
+use std::io::{BufWriter, BufReader};
+use std::iter::Peekable;
 use std::path::{Path, PathBuf};
 use std::process;
-use chrono::Duration;
+use chrono::{Duration, NaiveDateTime};
 use rayon::prelude::*;
 use std::sync::Mutex;
 use linya::Progress;
-use humansize::{FileSize, file_size_opts as size_opts};
-use clap::StructOpt;
+use humansize::{FormatSize, DECIMAL};
 
 mod args;
 pub(crate) use args::Args;
@@ -33,6 +33,11 @@ type LogName = String;
 type Logs = HashMap<LogName, Vec<PathBuf>>;
 type Characters = HashMap<CharacterName, Logs>;
 
+
+/*
+    TODO: Add option to use the left-most log to find the time to skip to
+        (For appending an updated log to another.)
+*/
 fn main() {
     match _main() {
         Err(e) => {
@@ -44,8 +49,18 @@ fn main() {
 }
 
 fn _main() -> Result<(), Error> {
-    pretty_env_logger::init();
     let args = Args::parse();
+    let fast_forward: Option<NaiveDateTime> = if let Some(ts) = args.fast_forward {
+        Some(ts.into())
+    } else {
+        None
+    };
+    stderrlog::new()
+        .module(module_path!())
+        .verbosity(args.verbosity as usize + 2)
+        .init()
+        .unwrap();
+    
     let folder_paths  = args.folders
         .into_iter()
         .map(|p| {
@@ -65,22 +80,21 @@ fn _main() -> Result<(), Error> {
 
     let (characters, size_total, file_total) = collect_logs(folder_paths)?;
 
-    println!("{} files to merge, {}.", file_total, size_total.file_size(size_opts::CONVENTIONAL).unwrap());
+    info!("{} files to merge, {}.", file_total, size_total.format_size(DECIMAL));
     
-    println!("Merging messages with at most a difference in the future of {}.", args.time_diff);
+    info!("Merging messages with at most a difference in the future of {}.", args.time_diff);
 
     if args.dry_run {
-        println!("Dry run enabled. Printing out what would be collected...");
+        info!("Dry run enabled. Printing out what would be collected...");
         for (character, log_entries) in characters {
-            println!("=== {} ===", character);
+            info!("=== {} ===", character);
             for (log_name, paths) in log_entries {
-                println!("== {} ==", log_name);
+                info!("== {} ==", log_name);
                 for path in paths {
-                    println!("{}", path.to_string_lossy());
+                    info!("{}", path.to_string_lossy());
                 }
             }
         }
-        println!("More information could be available. Set the RUST_LOG environment variable.");
         return Ok(());
     }
 
@@ -92,7 +106,14 @@ fn _main() -> Result<(), Error> {
 
     create_dir(&output_path).map_err(|e| Error::UnableToCreateDirectory(output_path.clone(), e))?;
 
-    let results: MergeResults = merge_logs(&characters, &output_path, args.time_diff.into(), args.dupe_warning);
+
+    let results: MergeResults = merge_logs(
+        &characters,
+        &output_path,
+        args.time_diff.into(),
+        args.dupe_warning,
+        fast_forward
+    );
     let mut character_index = 0;
     let mut error_count = 0;
     for (character, log_entries) in characters {
@@ -184,7 +205,13 @@ fn collect_logs(folder_paths: Vec<PathBuf>) -> Result<(Characters, u64, u64), Er
 type PerLogMergeResults = Vec<Result<(), Error>>;
 type MergeResults = Vec<Result<PerLogMergeResults, Error>>;
 
-fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, dupe_warning: bool) -> MergeResults {
+fn merge_logs(
+    characters: &Characters,
+    output_path: &Path,
+    time_diff: Duration,
+    dupe_warning: bool,
+    fast_forward: Option<NaiveDateTime>
+) -> MergeResults {
     let progress = Mutex::new(Progress::new());
     characters.par_iter().map(|(character_name, log_entries)| {
         let mut options = OpenOptions::new();
@@ -233,20 +260,45 @@ fn merge_logs(characters: &Characters, output_path: &Path, time_diff: Duration, 
                 tab_name.clone()
             )?;
 
+            let mut readers = Vec::with_capacity(locations.len());
+            for p in locations {
+                let file = File::open(p).map_err(|e| Error::UnableToOpenLog(p.into(), e))?;
+                readers.push(Reader::new(BufReader::new(file)).peekable())
+            }
+
             // For single locations, just write them out without comparing.
-            if locations.len() == 1 {
-                let f = File::open(&locations[0])
-                    .map_err(|e| Error::UnableToOpenLog(locations[0].clone(), e))?;
-                for r in reader::Reader::new_buffered(f) {
+            if readers.len() == 1 {
+                for r in &mut readers[0] {
                     let message = r?;
                     w.write_message(&mut log_buf, &mut idx_buf, message)?;
                 }
-            // Otherwise get the oldest message and compare it against up-to
-            // time-diff from each reader before determining to commit it.
-            // All messages within time-diff are added to the queue otherwise
-            // more are pulled from the readers.
+            // Otherwise open the files and get ready for the next step.
             } else {
-                deduplicate_messages(locations, tab_name, time_diff, w, log_buf, idx_buf, &dupe_warning)?;
+                /* If we need to fast-forward, assume the left-most is correct
+                    and write it's contents first then advance others.
+                */
+                if let Some(fast_forward_to) = fast_forward {
+                    let reader = &mut readers[0];
+                    info!("Fast forwarding to {}...", fast_forward_to.format("%Y-%m-%d %H:%M:%S"));
+                    trace!("Writing left-most log...");
+                    while let Some(message) = match reader.peek() {
+                        Some(Ok(message)) if message.datetime <= fast_forward_to => Some(reader.next().unwrap().unwrap()),
+                        _ => None,
+                    } {
+                        w.write_message(&mut log_buf, &mut idx_buf, message)?;
+                    }
+                    trace!("Advancing all other logs...");
+                    for index in 1..readers.len() {
+                        let reader = &mut readers[index];
+                        while match reader.peek() {
+                            Some(Ok(message)) if message.datetime < fast_forward_to => true,
+                            _ => false,
+                        } { /* Fast forward all other logs... */ }
+                    }
+                    info!("Fast forward complete.")
+                }
+                deduplicate_messages(readers, tab_name, time_diff, w, log_buf, idx_buf, &dupe_warning)?;
+
             }
             progress.lock().unwrap().inc_and_draw(&bar.lock().unwrap(), 1);
             Ok(())
@@ -269,7 +321,7 @@ fn format_message(message: &FChatMessage) -> String {
 }
 
 fn deduplicate_messages(
-    locations: &Vec<PathBuf>,
+    mut readers: Vec<Peekable<Reader>>,
     tab_name: String,
     time_diff: Duration,
     mut w: FChatWriter,
@@ -277,20 +329,16 @@ fn deduplicate_messages(
     mut idx_buf: BufWriter<File>,
     dupe_warning: &bool,
 ) -> Result<(), Error> {
-    let mut readers = Vec::with_capacity(locations.len());
-    for p in locations {
-        let file = File::open(p).map_err(|e| Error::UnableToOpenLog(p.into(), e))?;
-        readers.push(Reader::new_buffered(file).peekable())
-    }
     let mut messages = BinaryHeap::new();
     loop {
         match messages.peek() {
             None => {
-                /* This peeks into all the readers to seed messages with the
-                   oldest message and will discard the matching message on the
-                   first iteration in the next step but continue normally. This
-                   is to prevent redundant messages appearing at the start of
-                   the logs since messages are popped and pushed, not indexed.
+                /* The queue is empty and it needs an entry. Index and peek
+                    through all readers that have not reached EOF, find which
+                    one has the oldest entry, and *actually* read then push into
+                    the messages collection.
+
+                    If all are EOF, then we have finished.
                 */
                 let mut index = 0;
                 let mut sorted = Vec::with_capacity(readers.len());
@@ -298,24 +346,32 @@ fn deduplicate_messages(
                     let reader = &mut readers[index];
                     match reader.peek() {
                         Some(Ok(message)) => {
-                            sorted.push(Reverse(SortedMessage(message.clone())));
+                            sorted.push((index, message.datetime));
                             index += 1;
                         },
                         Some(Err(_)) => {
+                            debug!("Reader suffered an error while populating the queue.");
                             let _ = reader.next().unwrap()?;
                             panic!("We were expecting an error to unwrap, but it did not.");
                         }
                         None => {
+                            debug!("Discarding a empty reader.");
                             let _ = readers.remove(index);
                         }
                     }
                 }
-                sorted.sort();
-                if sorted.is_empty() { 
+                sorted.sort_by(|a, b| {
+                    a.1.partial_cmp(&b.1).unwrap()
+                });
+                if let Some((oldest_reader_index, _)) = sorted.first() {
+                    /* Double unwrap for the Some and Err. The above scan should
+                        confirm that we do have a message *and* it parsed.
+                    */
+                    let message = readers[*oldest_reader_index].next().unwrap().unwrap();
+                    messages.push(Reverse(SortedMessage(message)));
+                } else {
                     trace!("finished {}", tab_name);
                     break
-                } else {
-                    messages.push(sorted.remove(0));
                 }
             },
             Some(Reverse(SortedMessage(oldest_message))) => {
@@ -324,14 +380,18 @@ fn deduplicate_messages(
                 let mut index = 0;
                 while index < readers.len() {
                     let reader = &mut readers[index];
+                    /* Readers too far in the future are skipped to prevent the
+                        message collection from getting too big but also the
+                        collection should always contain messages within the
+                        current time-diff.
+                    */
                     match reader.peek() {
-                        /* Readers too far in the future are skipped to prevent
-                           the collection from getting too big but also the
-                           message collection should always contain messages
-                           within the current time-diff.
-                        */
                         Some(Ok(peeked_message))
-                        if peeked_message.datetime >= oldest_message_datetime + time_diff => {
+                        /* Even with a time-diff of 0, we should discard
+                            duplicate messages made at the same time to account
+                            for "syncing" an old log with an updated one.
+                        */
+                        if peeked_message.datetime > oldest_message_datetime + time_diff => {
                             index += 1;
                         },
                         Some(Ok(_)) => {
@@ -354,11 +414,12 @@ fn deduplicate_messages(
                             }
                             if !duplicate {
                                 messages.push(Reverse(SortedMessage(check_message)));
-                            } else if *dupe_warning && duplicate_hit > 1 {
+                            } else if *dupe_warning && duplicate_hit > 0 {
                                 warn!("Message was duplicated {} times:\n{}", duplicate_hit, format_message(&check_message));
                             }
                         },
                         Some(Err(_)) => {
+                            debug!("Reader suffered an error during comparisons.");
                             reader.next().unwrap()?;
                             unreachable!("We were expecting an error to unwrap, but it did not.");
                         },
@@ -366,8 +427,8 @@ fn deduplicate_messages(
                     }
                 }
                 let Reverse(SortedMessage(message)) = messages.pop().unwrap();
-                trace!("Message queue: {}", messages.len());
-                trace!("Committing message:\n[{}] {}", tab_name , format_message(&message));
+                debug!("Message queue: {}", messages.len());
+                debug!("Committing message:\n[{}] {}", tab_name , format_message(&message));
                 w.write_message(&mut log_buf, &mut idx_buf, message)?;
             }
         }

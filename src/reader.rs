@@ -1,5 +1,3 @@
-use std::io::BufReader;
-
 use fchat3_log_lib::read_fchatmessage_from_buf;
 use fchat3_log_lib::fchat_message::FChatMessage;
 use fchat3_log_lib::ReadSeek;
@@ -14,11 +12,6 @@ pub(crate) struct Reader<'a> {
 impl<'a> Reader<'a> {
     pub(crate) fn new<T: 'a + ReadSeek>(stream: T) -> Self {
         Self { buf: Box::new(stream) }
-    }
-
-    pub(crate) fn new_buffered<T: 'a + ReadSeek>(stream: T) -> Self {
-        let br = BufReader::new(stream);
-        Self::new(br)
     }
 }
 

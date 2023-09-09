@@ -1,6 +1,6 @@
 [package]
 name = "fchat3-log-merger"
-version = "1.1.0"
+version = "1.2.0"
 authors = ["Carlen White <whitersuburban@gmail.com>"]
 edition = "2021"
 description = "Reads multiple F-Chat 3.0 client log folders and merges them together"
@@ -15,29 +15,30 @@ lto = true
 fchat3-log-lib = {git = "https://github.com/WhiteHusky/fchat3-log-lib", branch = "hands-off"}
 
 [dependencies.clap]
-version = "^3.0.4"
-features = ["derive"]
+version = "4.2.4"
+features = ["derive", "cargo", "wrap_help"]
 
 [dependencies.humantime]
-version = "^2.1.0"
+version = "2.1.0"
 
 [dependencies.log]
-version = "^0.4.14"
+version = "0.4.17"
 
-[dependencies.pretty_env_logger]
-version = "^0.4.0"
+[dependencies.stderrlog]
+version = "0.5.4"
 
 [dependencies.chrono]
-version = "^0.4.19"
+version = "0.4.24"
 
 [dependencies.rayon]
-version = "^1.5.1"
+version = "1.7.0"
 
 [dependencies.linya]
-version = "^0.2.1"
+version = "0.3.0"
 
 [dependencies.humansize]
-version = "^1.1.1"
+version = "2.1.3"
+features = ["impl_style"]
 
 [dependencies.thiserror]
-version = "^1.0.30"
+version = "1.0.40"

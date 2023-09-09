@@ -15,6 +15,8 @@ pub(crate) enum Error {
     InputIsNotDirectory(PathBuf),
     #[error("{0}")]
     BadTimeDiff(#[from] humantime::DurationError),
+    #[error("{0}")]
+    BadTimestamp(#[from] humantime::TimestampError),
     #[error("Unable to create directory `{0}` due to: {1}")]
     UnableToCreateDirectory(PathBuf, io::Error),
     #[error("Failed to parse a message due to: {0}")]
