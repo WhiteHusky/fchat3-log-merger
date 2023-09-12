@@ -279,23 +279,27 @@ fn merge_logs(
                 */
                 if let Some(fast_forward_to) = fast_forward {
                     let reader = &mut readers[0];
-                    info!("Fast forwarding to {}...", fast_forward_to.format("%Y-%m-%d %H:%M:%S"));
-                    trace!("Writing left-most log...");
+                    info!("Fast forwarding {} to {}...",
+                        character_name,
+                        fast_forward_to.format("%Y-%m-%d %H:%M:%S")
+                    );
+                    trace!("Writing left-most log for {}...", character_name);
                     while let Some(message) = match reader.peek() {
                         Some(Ok(message)) if message.datetime <= fast_forward_to => Some(reader.next().unwrap().unwrap()),
                         _ => None,
                     } {
                         w.write_message(&mut log_buf, &mut idx_buf, message)?;
                     }
-                    trace!("Advancing all other logs...");
+                    trace!("Advancing all other logs for {}...", character_name);
+                    // Fast forward all other logs...
                     for index in 1..readers.len() {
                         let reader = &mut readers[index];
                         while match reader.peek() {
-                            Some(Ok(message)) if message.datetime < fast_forward_to => true,
+                            Some(Ok(message)) if message.datetime <= fast_forward_to => true,
                             _ => false,
-                        } { /* Fast forward all other logs... */ }
+                        } { reader.next(); }
                     }
-                    info!("Fast forward complete.")
+                    info!("Fast forward complete for {}.", character_name)
                 }
                 deduplicate_messages(readers, tab_name, time_diff, w, log_buf, idx_buf, &dupe_warning)?;
 
