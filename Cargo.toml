@@ -1,6 +1,6 @@
 [package]
 name = "fchat3-log-merger"
-version = "1.2.0"
+version = "1.2.1"
 authors = ["Carlen White <whitersuburban@gmail.com>"]
 edition = "2021"
 description = "Reads multiple F-Chat 3.0 client log folders and merges them together"
