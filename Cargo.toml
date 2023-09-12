@@ -12,7 +12,10 @@ license = "GPL-3.0-only"
 lto = true
 
 [dependencies]
-fchat3-log-lib = {git = "https://github.com/WhiteHusky/fchat3-log-lib", branch = "hands-off"}
+
+[dependencies.fchat3-log-lib]
+git = "https://github.com/WhiteHusky/fchat3-log-lib"
+branch = "hands-off"
 
 [dependencies.clap]
 version = "4.2.4"
